@@ -1,0 +1,17 @@
+name: "Daily Sales Report"
+description: "Revenue by product for yesterday"
+data_source:
+  url: "sqlite:///sales.db"
+  query: "SELECT product, date, revenue FROM sales WHERE date = date('now', '-1 day')"
+transform:
+  group_by: ["product"]
+  aggregations:
+    revenue: "sum"
+output: "pdf"
+chart:
+  kind: "bar"
+  x_column: "product"
+  y_column: "revenue"
+  title: "Sales by Product"
+  x_label: "Product"
+  y_label: "Revenue (USD)"
