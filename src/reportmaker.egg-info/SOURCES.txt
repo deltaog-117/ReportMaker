@@ -43,4 +43,5 @@ src/reportmaker/shared/email.py
 src/reportmaker/shared/file_utils.py
 src/reportmaker/shared/logging.py
 src/reportmaker/shared/pdf_generator.py
+src/reportmaker/shared/templating.py
 src/reportmaker/shared/validators.py

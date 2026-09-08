@@ -1,17 +1,41 @@
-name: "Daily Sales Report"
-description: "Revenue by product for yesterday"
+name: "Sales Report for {{ product }} on {{ start_date }}"
+description: "Dynamic sales report with date and product filters"
+parameters:
+  - name: start_date
+    type: date
+    required: true
+    description: "Start date for the report (YYYY-MM-DD)"
+  - name: end_date
+    type: date
+    required: false
+    default: "2026-09-07"
+    description: "End date for the report (YYYY-MM-DD)"
+  - name: product
+    type: string
+    required: false
+    default: "Widget"
+    description: "Product name to filter"
+
 data_source:
   url: "sqlite:///sales.db"
-  query: "SELECT product, date, revenue FROM sales WHERE date = date('now', '-1 day')"
+  query: |
+    SELECT product, date, revenue
+    FROM sales
+    WHERE date BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    {% if product %}
+      AND product = '{{ product }}'
+    {% endif %}
+
 transform:
   group_by: ["product"]
   aggregations:
     revenue: "sum"
+
 output: "pdf"
 chart:
   kind: "bar"
   x_column: "product"
   y_column: "revenue"
-  title: "Sales by Product"
+  title: "Revenue by Product"
   x_label: "Product"
   y_label: "Revenue (USD)"

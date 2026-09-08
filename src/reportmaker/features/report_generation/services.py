@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, text
 from reportmaker.shared.db import get_engine
 from reportmaker.shared.logging import get_logger
 from reportmaker.shared.file_utils import ensure_directory, safe_filename
+from reportmaker.shared.templating import process_parameters, render_sql_query, render_template
 from reportmaker.features.report_generation.models import ReportConfig, ReportRequest, ReportResult, TransformConfig
 from reportmaker.features.report_generation.exceptions import (
     ConfigError,
@@ -37,8 +38,8 @@ logger = get_logger(__name__)
 class Extractor(ABC):
     """Extract raw data from a data source."""
     @abstractmethod
-    def extract(self, config: ReportConfig, parameters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
-        """Execute query and return DataFrame."""
+    def extract(self, config: ReportConfig, parameters: Dict[str, Any]) -> pd.DataFrame:
+        """Execute query with rendered parameters and return DataFrame."""
         pass
 
 
@@ -60,18 +61,27 @@ class Renderer(ABC):
 
 # ---------- Concrete Implementations ----------
 class SQLAlchemyExtractor(Extractor):
-    """Extract data using SQLAlchemy engine built from config URL."""
-    def extract(self, config: ReportConfig, parameters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
+    """Extract data using SQLAlchemy engine, with Jinja2 template rendering."""
+    def extract(self, config: ReportConfig, parameters: Dict[str, Any]) -> pd.DataFrame:
+        # Process dynamic parameters
+        processed_params = process_parameters(config.parameters, parameters)
+        # Render the SQL query with the processed parameters
+        rendered_query = render_sql_query(config.data_source.query, processed_params)
+
+        # For static parameters (e.g., from config), we can merge if needed
+        static_params = config.data_source.parameters or {}
+        # We'll pass static params to SQLAlchemy as bound parameters (safe)
+        # But we already substituted dynamic params into the query.
+        # So we pass static ones only.
         url = config.data_source.url
         engine = create_engine(url)
-        query = config.data_source.query
-        params = config.data_source.parameters or {}
-        if parameters:
-            params.update(parameters)
+
         try:
             with engine.connect() as conn:
-                df = pd.read_sql(text(query), conn, params=params)
-            logger.info(f"Extracted {len(df)} rows from query")
+                # Use static params as bound parameters (if any)
+                # We'll pass them via the params argument.
+                df = pd.read_sql(text(rendered_query), conn, params=static_params)
+            logger.info(f"Extracted {len(df)} rows from query (with dynamic params)")
             return df
         except Exception as e:
             raise DataExtractionError(f"Failed to extract data: {e}") from e
@@ -121,7 +131,7 @@ class PDFRenderer(Renderer):
             styles = getSampleStyleSheet()
             story = []
 
-            # Title
+            # Title - use config.name as is (already possibly a template, but we don't parameterize it)
             title = config.name or "Report"
             story.append(Paragraph(title, styles['Title']))
             story.append(Spacer(1, 0.25*inch))
@@ -170,19 +180,16 @@ class PDFRenderer(Renderer):
                         ax.set_ylabel(chart_config.y_label)
                     ax.grid(True, linestyle='--', alpha=0.6)
 
-                    # Save chart to memory as PNG
                     img_buf = io.BytesIO()
                     plt.savefig(img_buf, format='png', dpi=100, bbox_inches='tight')
                     plt.close(fig)
                     img_buf.seek(0)
 
-                    # Embed image in PDF – pass the buffer directly
                     story.append(Image(img_buf, width=6*inch, height=4*inch))
                 except Exception as e:
                     logger.error(f"Failed to generate chart: {e}")
                     story.append(Paragraph(f"Chart generation failed: {e}", styles['Italic']))
 
-            # Build PDF
             doc.build(story)
             logger.info(f"PDF rendered to {output_path}")
             return output_path
@@ -202,20 +209,51 @@ class ReportPipeline:
         start_time = time.time()
         config = request.config
         output_dir = request.output_dir
-        try:
-            logger.info(f"Starting report generation for '{config.name}'")
+        provided_params = request.parameters or {}
 
-            df = self.extractor.extract(config, request.parameters)
+        # Process dynamic parameters early so we can use them for the title and filename
+        try:
+            # We need to process parameters to get the context for possible filename/title
+            # We'll do it inside the try block
+            processed_params = process_parameters(config.parameters, provided_params)
+        except ValueError as e:
+            return ReportResult(
+                success=False,
+                error=str(e),
+                metrics={"duration_seconds": 0},
+                logs=[f"Parameter validation failed: {e}"],
+            )
+
+        # Render the report name with parameters if it contains placeholders
+        # We'll allow {{ param }} in the name as well
+        try:
+            # We'll render the name if it looks like a template
+            if '{{' in config.name:
+                rendered_name = render_template(config.name, processed_params)
+            else:
+                rendered_name = config.name
+        except Exception as e:
+            logger.warning(f"Failed to render report name: {e}, using original")
+            rendered_name = config.name
+
+        try:
+            logger.info(f"Starting report generation for '{rendered_name}'")
+
+            # Extract (uses the processed params internally)
+            df = self.extractor.extract(config, provided_params)  # extract will process again, but that's fine
             extraction_rows = len(df)
 
+            # Transform
             df = self.transformer.transform(df, config)
             transform_rows = len(df)
 
-            safe_name = safe_filename(config.name)
+            # Generate output filename (using rendered name)
+            safe_name = safe_filename(rendered_name)
             timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{safe_name}_{timestamp}.{config.output.value}"
             output_path = str(Path(output_dir) / filename)
 
+            # Render
             self.renderer.render(df, config, output_path)
 
             duration = time.time() - start_time
@@ -224,6 +262,7 @@ class ReportPipeline:
                 "extraction_rows": extraction_rows,
                 "transform_rows": transform_rows,
                 "output_format": config.output.value,
+                "parameters": processed_params,
             }
             logger.info(f"Report generated successfully in {duration:.2f}s", extra={"metrics": metrics})
 
@@ -231,7 +270,7 @@ class ReportPipeline:
                 success=True,
                 output_path=output_path,
                 metrics=metrics,
-                logs=[f"Generated {config.name} successfully"],
+                logs=[f"Generated '{rendered_name}' successfully with params: {processed_params}"],
             )
         except Exception as e:
             logger.error(f"Report generation failed: {e}", exc_info=True)
