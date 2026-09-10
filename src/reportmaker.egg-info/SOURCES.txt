@@ -6,6 +6,7 @@ src/reportmaker/main.py
 src/reportmaker.egg-info/PKG-INFO
 src/reportmaker.egg-info/SOURCES.txt
 src/reportmaker.egg-info/dependency_links.txt
+src/reportmaker.egg-info/entry_points.txt
 src/reportmaker.egg-info/requires.txt
 src/reportmaker.egg-info/top_level.txt
 src/reportmaker/features/__init__.py
@@ -32,10 +33,12 @@ src/reportmaker/features/scheduling/repositories.py
 src/reportmaker/features/scheduling/schemas.py
 src/reportmaker/features/scheduling/services.py
 src/reportmaker/features/template_management/__init__.py
+src/reportmaker/features/template_management/exceptions.py
 src/reportmaker/features/template_management/models.py
 src/reportmaker/features/template_management/repositories.py
 src/reportmaker/features/template_management/schemas.py
 src/reportmaker/features/template_management/services.py
+src/reportmaker/features/template_management/xlsx_layout.py
 src/reportmaker/shared/__init__.py
 src/reportmaker/shared/config.py
 src/reportmaker/shared/db.py
