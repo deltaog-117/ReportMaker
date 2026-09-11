@@ -22,10 +22,14 @@ src/reportmaker/features/delivery/schemas.py
 src/reportmaker/features/delivery/services.py
 src/reportmaker/features/report_generation/__init__.py
 src/reportmaker/features/report_generation/exceptions.py
+src/reportmaker/features/report_generation/interfaces.py
 src/reportmaker/features/report_generation/models.py
 src/reportmaker/features/report_generation/repositories.py
 src/reportmaker/features/report_generation/schemas.py
 src/reportmaker/features/report_generation/services.py
+src/reportmaker/features/report_generation/renderers/__init__.py
+src/reportmaker/features/report_generation/renderers/excel.py
+src/reportmaker/features/report_generation/renderers/html.py
 src/reportmaker/features/scheduling/__init__.py
 src/reportmaker/features/scheduling/exceptions.py
 src/reportmaker/features/scheduling/models.py
