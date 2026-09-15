@@ -12,6 +12,8 @@ Items are organized by priority, not by timeline.
 - ✅ Modern Python project setup with `pyproject.toml`, `src/` layout, and dependency management
 - ✅ Test skeleton mirroring source (`tests/unit/`, `tests/integration/`)
 - ✅ Linting and type‑checking configuration (`ruff`, `mypy`)
+- ✅ Configuration Validation – `reportmaker validate` command plus semantic pre‑flight checks (cron syntax, Jinja2 syntax, database URL, chart columns) wired into `run` and `schedule add`, so bad configs fail fast with actionable messages instead of a raw traceback or a silent scheduled failure
+- ✅ Delivery Options – `delivery` feature with a channel abstraction (`local`, `email`); reports can be copied to a directory or sent as an SMTP email attachment via an optional `delivery:` section in the report YAML, triggered automatically after `run` and after each successful scheduled run
 
 ---
 
@@ -45,17 +47,11 @@ These features make the tool more useful and professional.
   - Support intervals (daily, weekly, monthly) and time‑of‑day.
   - Store execution logs and notify on failure.
 
-- **Delivery Options** – Implement local file save and email delivery:
-  - Save generated reports to a specified directory with naming conventions (e.g., `sales_report_2026-09-07.pdf`).
-  - Send PDF as an email attachment (or embedded) via SMTP.
-
 - **Multi‑Format Export** – Add HTML and Excel export:
   - HTML for embedding in email bodies or web previews.
   - Excel with multiple sheets (raw data + summary).
 
 - **Template Management** – Store report templates (queries, formatting, schedule) in a database or file system, with versioning. This allows users to manage multiple reports and reuse components.
-
-- **Configuration Validation** – Validate YAML files against a schema to prevent runtime errors.
 
 ---
 

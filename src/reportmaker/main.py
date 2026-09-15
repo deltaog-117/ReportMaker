@@ -5,12 +5,19 @@ import json
 from pathlib import Path
 
 import click
+from pydantic import ValidationError
 
+from reportmaker.shared.config import load_yaml_config
 from reportmaker.shared.logging import setup_logging, get_logger
-from reportmaker.features.report_generation.services import generate_report
+from reportmaker.shared.validators import validate_cron_expression
+from reportmaker.features.report_generation.services import generate_report, load_and_validate_config
+from reportmaker.features.report_generation.exceptions import ConfigError
+from reportmaker.features.report_generation.models import ReportResult
+from reportmaker.features.delivery.models import DeliveryConfig
+from reportmaker.features.delivery.services import deliver_report
 from reportmaker.features.scheduling.services import SchedulerService
 from reportmaker.features.scheduling.models import ScheduleConfig
-from reportmaker.features.scheduling.exceptions import ScheduleAlreadyExistsError, ScheduleNotFoundError
+from reportmaker.features.scheduling.exceptions import SchedulingError, ScheduleAlreadyExistsError, ScheduleNotFoundError
 from reportmaker.features.template_management.services import TemplateManager
 from reportmaker.features.template_management.exceptions import (
     TemplateNotFoundError,
@@ -40,14 +47,37 @@ def run(config: str, output_dir: str, verbose: bool, param: tuple, params_file: 
     setup_logging(level="DEBUG" if verbose else "INFO", json_format=False)
     parameters = _parse_parameters(param, params_file)
     logger.info(f"Generating report from config: {config} with params: {parameters}")
-    result = generate_report(config, output_dir, parameters)
+    try:
+        result = generate_report(config, output_dir, parameters)
+    except ConfigError as e:
+        click.echo(f"❌ {e}", err=True)
+        sys.exit(1)
     if result.success:
         click.echo(f"✅ Report generated successfully: {result.output_path}")
         click.echo(f"📊 Metrics: {result.metrics}")
+        _maybe_deliver(config, result.output_path)
         sys.exit(0)
     else:
         click.echo(f"❌ Report generation failed: {result.error}", err=True)
         sys.exit(1)
+
+
+# ---------- Validate command ----------
+@cli.command("validate")
+@click.option("--config", "-c", required=True, type=click.Path(exists=True), help="Path to YAML report configuration")
+def validate_cmd(config: str):
+    """Validate a report configuration file without generating a report."""
+    setup_logging(level="INFO", json_format=False)
+    try:
+        cfg = load_and_validate_config(config)
+    except ConfigError as e:
+        click.echo(f"❌ {e}", err=True)
+        sys.exit(1)
+    click.echo(f"✅ '{config}' is valid.")
+    click.echo(f"   Report name: {cfg.name}")
+    click.echo(f"   Output format: {cfg.output.value}")
+    click.echo(f"   Parameters: {len(cfg.parameters) if cfg.parameters else 0}")
+    click.echo(f"   Has chart: {'yes' if cfg.chart else 'no'}")
 
 
 # ---------- Scheduling commands ----------
@@ -74,6 +104,14 @@ def schedule_add(name, cron, interval, config, param, params_file, enabled, sche
         click.echo("Error: Must provide either --cron or --interval", err=True); sys.exit(1)
     if cron and interval:
         click.echo("Error: Provide only one of --cron or --interval", err=True); sys.exit(1)
+    try:
+        if cron:
+            validate_cron_expression(cron)
+        load_and_validate_config(config)
+    except ValueError as e:
+        click.echo(f"❌ {e}", err=True); sys.exit(1)
+    except ConfigError as e:
+        click.echo(f"❌ {e}", err=True); sys.exit(1)
     parameters = _parse_parameters(param, params_file)
     try:
         cfg = ScheduleConfig(
@@ -126,9 +164,12 @@ def schedule_remove(name, schedules_file):
 def schedule_start(schedules_file, foreground):
     """Start the scheduler daemon (runs all scheduled jobs)."""
     setup_logging(level="INFO", json_format=False)
-    service = SchedulerService(schedules_file)
+    service = SchedulerService(schedules_file, on_report_generated=_deliver_from_schedule)
     click.echo(f"Starting scheduler... (foreground={foreground})")
-    service.start(foreground=foreground)
+    try:
+        service.start(foreground=foreground)
+    except SchedulingError as e:
+        click.echo(f"❌ {e}", err=True); sys.exit(1)
 
 
 # ---------- Template commands ----------
@@ -239,6 +280,30 @@ def template_delete(name, templates_dir):
 
 
 # ---------- Helpers ----------
+def _maybe_deliver(config_path: str, output_path: str) -> None:
+    """Deliver the generated report if its YAML config has a 'delivery' section."""
+    raw_config = load_yaml_config(config_path)
+    raw_delivery = raw_config.get("delivery")
+    if not raw_delivery:
+        return
+    try:
+        delivery_config = DeliveryConfig(**raw_delivery)
+    except ValidationError as e:
+        click.echo(f"⚠️  Invalid delivery configuration, skipping delivery: {e}", err=True)
+        return
+    result = deliver_report(output_path, delivery_config)
+    if result.success:
+        click.echo(f"📬 Delivered via {result.channel.value}: {result.destination}")
+    else:
+        click.echo(f"⚠️  Delivery failed: {result.error}", err=True)
+
+
+def _deliver_from_schedule(cfg: ScheduleConfig, result: ReportResult) -> None:
+    """Deliver a scheduled report if its config declares a delivery section."""
+    if result.output_path:
+        _maybe_deliver(cfg.report_config, result.output_path)
+
+
 def _parse_parameters(param: tuple, params_file: str) -> dict:
     """Parse CLI parameters from --param and --params-file."""
     parameters = {}

@@ -2,7 +2,7 @@
 
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Callable, Dict, List, Optional, Any
 from datetime import datetime
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -14,7 +14,7 @@ import logging
 from reportmaker.shared.file_utils import ensure_directory
 from reportmaker.shared.logging import get_logger
 from reportmaker.features.report_generation.services import generate_report
-from reportmaker.features.report_generation.models import ReportConfig
+from reportmaker.features.report_generation.models import ReportConfig, ReportResult
 from reportmaker.features.scheduling.models import ScheduleConfig, ScheduleStatus
 from reportmaker.features.scheduling.exceptions import (
     SchedulingError,
@@ -28,9 +28,14 @@ logger = get_logger(__name__)
 class SchedulerService:
     """Manages schedules and the APScheduler instance."""
 
-    def __init__(self, schedules_file: str = "schedules.yaml"):
+    def __init__(
+        self,
+        schedules_file: str = "schedules.yaml",
+        on_report_generated: Optional[Callable[[ScheduleConfig, ReportResult], None]] = None,
+    ):
         self.schedules_file = Path(schedules_file)
         self.scheduler: Optional[BlockingScheduler] = None
+        self.on_report_generated = on_report_generated
         self._load_schedules()
 
     def _load_schedules(self) -> None:
@@ -90,11 +95,16 @@ class SchedulerService:
     def _get_trigger(self, cfg: ScheduleConfig):
         """Return an APScheduler trigger based on config."""
         if cfg.cron:
-            return CronTrigger.from_crontab(cfg.cron)
+            try:
+                return CronTrigger.from_crontab(cfg.cron)
+            except Exception as e:
+                raise SchedulingError(
+                    f"Schedule '{cfg.name}' has an invalid cron expression '{cfg.cron}': {e}"
+                ) from e
         elif cfg.interval_seconds:
             return IntervalTrigger(seconds=cfg.interval_seconds)
         else:
-            raise ValueError("No trigger defined")
+            raise SchedulingError(f"Schedule '{cfg.name}' has no trigger defined")
 
     def _job_function(self, schedule_name: str) -> None:
         """The function that runs the report."""
@@ -118,6 +128,8 @@ class SchedulerService:
                 # Update last_run
                 cfg.last_run = datetime.now()
                 self._save_schedules()
+                if self.on_report_generated:
+                    self.on_report_generated(cfg, result)
             else:
                 logger.error(f"Scheduled report '{schedule_name}' failed: {result.error}")
         except Exception as e:

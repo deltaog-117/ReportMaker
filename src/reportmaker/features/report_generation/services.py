@@ -4,10 +4,11 @@ import io
 import time
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from pydantic import ValidationError
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -15,17 +16,21 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from sqlalchemy import create_engine, text
 
+from reportmaker.shared.config import load_yaml_config
 from reportmaker.shared.logging import get_logger
 from reportmaker.shared.file_utils import ensure_directory, safe_filename
 from reportmaker.shared.templating import process_parameters, render_sql_query, render_template
+from reportmaker.shared.validators import collect_errors, validate_database_url, validate_jinja2_syntax
 from reportmaker.features.report_generation.interfaces import Extractor, Transformer, Renderer
 from reportmaker.features.report_generation.models import (
+    ChartConfig,
     OutputFormat,
     ReportConfig,
     ReportRequest,
     ReportResult,
 )
 from reportmaker.features.report_generation.exceptions import (
+    ConfigError,
     DataExtractionError,
     DataTransformationError,
     RenderingError,
@@ -271,6 +276,54 @@ class ReportPipeline:
             )
 
 
+# ---------- Configuration Validation ----------
+def _validate_chart_columns(chart: ChartConfig) -> None:
+    if not chart.x_column.strip():
+        raise ValueError("chart.x_column must not be empty")
+    if not chart.y_column.strip():
+        raise ValueError("chart.y_column must not be empty")
+
+
+def validate_report_config_semantics(config: ReportConfig) -> List[str]:
+    """Run checks beyond Pydantic's structural validation.
+
+    Catches things a valid-shaped config can still get wrong: an
+    unparseable database URL, a query with broken Jinja2 syntax, or a
+    chart referencing empty column names. Returns a list of human-readable
+    error messages (empty if the config is semantically sound).
+    """
+    checks = [
+        lambda: validate_database_url(config.data_source.url),
+        lambda: validate_jinja2_syntax(config.data_source.query, "data_source.query"),
+    ]
+    if "{{" in config.name:
+        checks.append(lambda: validate_jinja2_syntax(config.name, "name"))
+    if config.chart:
+        checks.append(lambda: _validate_chart_columns(config.chart))
+    return collect_errors(*checks)
+
+
+def load_and_validate_config(config_path: str) -> ReportConfig:
+    """Load a YAML report config, validating both structure and semantics.
+
+    Raises ConfigError listing every issue found if the config is invalid,
+    rather than letting the first Pydantic error or a runtime failure
+    (bad cron, broken template, unreachable DB) surface later.
+    """
+    raw_config = load_yaml_config(config_path)
+    try:
+        config = ReportConfig(**raw_config)
+    except ValidationError as e:
+        messages = [f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in e.errors()]
+        raise ConfigError("invalid report configuration:\n  - " + "\n  - ".join(messages)) from e
+
+    semantic_errors = validate_report_config_semantics(config)
+    if semantic_errors:
+        raise ConfigError("invalid report configuration:\n  - " + "\n  - ".join(semantic_errors))
+
+    return config
+
+
 # ---------- Convenience Functions ----------
 def create_default_pipeline(output_format: OutputFormat = OutputFormat.PDF) -> ReportPipeline:
     """Create a pipeline with default implementations for the given format."""
@@ -287,11 +340,7 @@ def generate_report(
     parameters: Optional[Dict[str, Any]] = None,
 ) -> ReportResult:
     """Convenience function to generate a report from a YAML config file."""
-    from reportmaker.shared.config import load_yaml_config
-    from reportmaker.features.report_generation.models import ReportConfig
-
-    raw_config = load_yaml_config(config_path)
-    config = ReportConfig(**raw_config)
+    config = load_and_validate_config(config_path)
     request = ReportRequest(config=config, output_dir=output_dir, parameters=parameters)
     pipeline = create_default_pipeline(config.output)
     return pipeline.run(request)

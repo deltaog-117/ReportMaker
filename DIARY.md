@@ -18,6 +18,8 @@
 | 2026-09-09 | Schedule Storage | YAML File | ✅ Confirmed |
 | 2026-09-10 | Template Management | Excel Spreadsheet ↔ YAML | ✅ Confirmed |
 | 2026-09-11 | Multi-Format Export | One Renderer Per Format | ✅ Confirmed |
+| 2026-09-15 | Configuration Validation | Pydantic + Semantic Pre-Flight Checks | ✅ Confirmed |
+| 2026-09-15 | Delivery Options | Feature-First Channel Abstraction, Wired via `main.py` | ✅ Confirmed |
 
 ---
 
@@ -845,3 +847,146 @@ The report generation pipeline already produced PDFs, but users needed additiona
 |------|--------|--------|
 | 2026-09-11 | Initial decision and implementation | deltaog-117 |
 | 2026-09-11 | Added `.xlsx` extension mapping and date-cast fix | deltaog-117 |
+
+---
+
+### Configuration Validation
+
+**Date:** 2026-09-15
+**Status:** ✅ Confirmed
+
+---
+
+#### Context / Background
+
+`ReportConfig` and `ScheduleConfig` were already Pydantic models, so structurally malformed YAML (missing fields, wrong types) failed loudly. But a *structurally valid* config could still fail at runtime in ways Pydantic can't catch: a `data_source.url` that isn't a real SQLAlchemy URL, a `data_source.query` with broken Jinja2 syntax, a schedule's `cron` string that APScheduler rejects, or a chart referencing an empty column name. None of these were caught before `reportmaker run` or `reportmaker schedule add`, so they surfaced as a raw traceback mid-run, or — worse — as a silent failure the next time a scheduled job fired.
+
+#### Options Considered
+
+**Option A: Pydantic + wrap exceptions**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Minimal new code; catches `ValidationError` and re-raises as the existing `ConfigError`; no new dependencies |
+| **Disadvantages** | Misses everything Pydantic's structural validation can't see — bad cron, broken Jinja2, unparseable DB URL — so those still fail at runtime |
+| **Implementation Difficulty** | Easy |
+
+**Option B: Pydantic + semantic pre-flight checks**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Catches cron syntax (`CronTrigger.from_crontab`), Jinja2 syntax (`Environment().parse()`), and DB URL validity (`sqlalchemy.engine.url.make_url`) before anything runs; batches every issue into one readable error instead of failing on the first one; reuses dependencies already installed (jinja2, apscheduler, sqlalchemy) |
+| **Disadvantages** | More code than Option A; each new config field ideally gets a matching semantic check |
+| **Implementation Difficulty** | Medium |
+
+**Option C: JSON Schema validation layer**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Schema is a portable, language-independent artifact |
+| **Disadvantages** | Duplicates validation logic the Pydantic models already express — two sources of truth to keep in sync; adds a new dependency (`jsonschema`) |
+| **Implementation Difficulty** | Medium-Hard |
+
+#### Decision & Rationale
+
+**Chosen Option:** B — Pydantic + semantic pre-flight checks
+
+> Option B is the direct extension of the type-driven design already in place (Pillar 1: illegal states unrepresentable), and it's what the roadmap literally asked for — "prevent runtime errors." Every check it needs (`jinja2.Environment`, `apscheduler.CronTrigger`, `sqlalchemy.make_url`) is a dependency the project already has, so there's no new attack surface or supply-chain cost. Option C would have meant maintaining the same rules twice (once as Pydantic types, once as a JSON Schema document), which fights the project's own "make illegal states unrepresentable" pillar rather than serving it.
+>
+> **Trade-offs accepted:**
+> - Semantic checks live in `report_generation/services.py` rather than inside the Pydantic model's own validators, specifically so existing tests that construct `ReportConfig(data_source=DataSourceConfig(url="", query=""))` directly (bypassing config loading) keep working unmodified — semantic validation only runs through the new `load_and_validate_config()` entry point, not on every model construction.
+> - The chart-column check (`x_column`/`y_column` must be non-empty) is a hand-written rule rather than a general schema constraint; acceptable since it's the only place today that needs it.
+
+#### Implementation Notes
+
+**Files added:**
+- `src/reportmaker/shared/validators.py` — `validate_cron_expression`, `validate_jinja2_syntax`, `validate_database_url`, `validate_email_address`, and `collect_errors` (runs zero-arg checks, gathers `ValueError` messages instead of raising on the first one). Shared because both `report_generation` and `delivery` need email/URL/template checks, and `scheduling` needs the cron check.
+- `tests/unit/shared/test_validators.py`, `tests/unit/features/report_generation/test_config_validation.py`
+
+**Files modified:**
+- `src/reportmaker/features/report_generation/services.py` — added `validate_report_config_semantics()` and `load_and_validate_config()`; `generate_report()` now calls the latter instead of constructing `ReportConfig` directly.
+- `src/reportmaker/features/scheduling/services.py` — `_get_trigger()` now wraps `CronTrigger.from_crontab()` and raises `SchedulingError` with a clear message instead of letting a raw APScheduler exception surface when `schedule start` loads a hand-edited `schedules.yaml`.
+- `src/reportmaker/main.py` — added `reportmaker validate --config <path>` (mirrors `template validate`'s output); `run` and `schedule add` now validate before doing anything else and print a clean `❌ ...` message instead of a traceback.
+
+#### References
+
+- Related decision: Delivery Options (below) — reuses the same `ConfigError` / `ValidationError` handling pattern at the CLI boundary.
+
+---
+
+### Delivery Options
+
+**Date:** 2026-09-15
+**Status:** ✅ Confirmed
+
+---
+
+#### Context / Background
+
+The roadmap's Medium Priority "Delivery Options" item asked for local file save (already effectively covered by `--output-dir`) and email delivery via SMTP. The `delivery/` feature folder and `shared/email.py` existed as empty scaffold stubs — including `tests/unit/features/delivery/test_models.py` and `test_services.py`, both empty — clearly placeholders for exactly this.
+
+#### Options Considered
+
+**Option A: Bolt email sending into `report_generation`'s `run` CLI command**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Fastest to ship |
+| **Disadvantages** | Violates the Delete Test — deleting `delivery/` wouldn't remove delivery functionality, because there'd be none in `delivery/` to delete; no reuse from `schedule start` |
+| **Implementation Difficulty** | Easy |
+
+**Option B: Real `delivery` feature with a channel abstraction**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Passes the Delete Test — `report_generation` and `scheduling` never import `delivery`; mirrors the existing `Extractor`/`Transformer`/`Renderer` interface pattern in `report_generation/interfaces.py`; fills the already-scaffolded empty test stubs |
+| **Disadvantages** | More surface area: new `DeliveryConfig`/`DeliveryResult` models, a `DeliveryHandler` interface, a new `exceptions.py` |
+| **Implementation Difficulty** | Medium |
+
+**Option C: Out-of-process delivery worker**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Decouples delivery timing/retries from report generation |
+| **Disadvantages** | Requires message-queue infrastructure this single-user CLI tool has no other need for — pure over-engineering at this stage |
+| **Implementation Difficulty** | Hard |
+
+#### Decision & Rationale
+
+**Chosen Option:** B — Real `delivery` feature with a channel abstraction
+
+> Option B was the only one that didn't violate the architecture's own Delete Test. The harder design question was *where the wiring lives*: `ReportConfig` could not gain a `delivery: DeliveryConfig` field, because `report_generation/models.py` importing from `features/delivery/models.py` would mean deleting `delivery/` breaks `report_generation` — exactly the dependency direction the Delete Test forbids. Same problem for `scheduling` calling into `delivery` directly.
+>
+> The resolution: `delivery:` is a YAML key `ReportConfig` ignores (Pydantic v2 ignores unknown fields by default), and only `main.py` — the composition root, which architecture rule 5 explicitly allows to "inject dependencies into the features" — reads that section and calls `deliver_report()`. For the scheduled path, `SchedulerService` gained a constructor-injected `on_report_generated` callback (plain `Callable`, no import of anything `delivery`-related), and `main.py` wires `_deliver_from_schedule` into it. `scheduling` stays exactly as deletable as it was before this feature existed.
+>
+> **Trade-offs accepted:**
+> - Email addresses are validated with a hand-rolled regex (`shared/validators.validate_email_address`) rather than pulling in `pydantic[email]`/`email-validator`, to avoid a new dependency for a single-purpose syntax check.
+> - `DeliveryConfig.local_dir` is deliberately separate from `--output-dir` — it's for delivering a *copy* to a different destination (e.g., a shared drive) after generation, not a replacement for where the report is generated.
+
+#### Implementation Notes
+
+**Files added:**
+- `src/reportmaker/features/delivery/models.py` — `DeliveryChannel` enum (`none`/`local`/`email`), `EmailDeliveryConfig`, `DeliveryConfig` (model-validated: `email` required when channel is `email`, `local_dir` required when channel is `local`), `DeliveryResult`.
+- `src/reportmaker/features/delivery/exceptions.py` — `DeliveryError`, `EmailDeliveryError`.
+- `src/reportmaker/features/delivery/services.py` — `DeliveryHandler` ABC, `LocalDeliveryHandler` (copies via `shutil.copy2` into `local_dir`), `EmailDeliveryHandler` (builds an `email.message.EmailMessage` with the report as an attachment, sends via stdlib `smtplib.SMTP`; SMTP host/port/user/password/TLS read from env vars via `shared/config.get_env`), `create_delivery_handler()` factory, `deliver_report()` entry point.
+- `tests/unit/features/delivery/test_models.py`, `test_services.py` — filled in the previously-empty stubs.
+
+**Files modified:**
+- `src/reportmaker/main.py` — added `_maybe_deliver()` (reads the `delivery:` section from the report YAML, validates it, calls `deliver_report()`) and `_deliver_from_schedule()`; wired into `run` after a successful generation and into `schedule start` via `SchedulerService`'s new callback hook.
+- `src/reportmaker/features/scheduling/services.py` — `SchedulerService.__init__` accepts an optional `on_report_generated: Callable[[ScheduleConfig, ReportResult], None]`, invoked from `_job_function()` after a successful run.
+
+**No new dependencies** — `smtplib` and `email.message` are stdlib; SMTP credentials come from environment variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_TLS`), never committed to a config file.
+
+#### References
+
+- [Python `smtplib` documentation](https://docs.python.org/3/library/smtplib.html)
+- [Python `email.message.EmailMessage`](https://docs.python.org/3/library/email.message.html)
+- Related decision: Configuration Validation (above)
+
+---
+
+#### Review / Update Log
+
+| Date | Update | Author |
+|------|--------|--------|
+| 2026-09-15 | Initial decision and implementation for both Configuration Validation and Delivery Options | deltaog-117 |
