@@ -279,6 +279,39 @@ def template_delete(name, templates_dir):
         click.echo(f"❌ {e}", err=True); sys.exit(1)
 
 
+# ---------- GUI command ----------
+@cli.command("gui")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Address to listen on. Keep the default so only this computer can reach the app")
+@click.option("--port", default=8080, show_default=True, type=click.IntRange(1, 65535), help="Port to listen on")
+@click.option("--templates-dir", default="./templates", show_default=True, help="Directory holding report templates")
+@click.option("--output-dir", "-o", default="./reports", show_default=True, help="Directory where generated reports are saved")
+@click.option("--schedules-file", type=click.Path(), default="schedules.yaml", show_default=True, help="Path to schedules storage file")
+@click.option("--no-browser", is_flag=True, help="Do not open a browser window automatically")
+def gui_cmd(host, port, templates_dir, output_dir, schedules_file, no_browser):
+    """Open the browser interface, so no command line is needed."""
+    setup_logging(level="INFO", json_format=False)
+    try:
+        # Imported here so the CLI keeps working when the optional GUI extra isn't installed.
+        from reportmaker.features.gui.models import GuiSettings
+        from reportmaker.features.gui.pages import run_app
+    except ModuleNotFoundError as e:
+        if not (e.name or "").startswith("nicegui"):
+            raise
+        click.echo("❌ The GUI needs an extra package. Install it with:", err=True)
+        click.echo("   pip install 'reportmaker[gui]'", err=True)
+        sys.exit(1)
+    settings = GuiSettings(
+        host=host,
+        port=port,
+        templates_dir=templates_dir,
+        output_dir=output_dir,
+        schedules_file=schedules_file,
+        open_browser=not no_browser,
+    )
+    click.echo(f"Starting ReportMaker at http://{host}:{port} (press Ctrl+C to stop)")
+    run_app(settings)
+
+
 # ---------- Helpers ----------
 def _maybe_deliver(config_path: str, output_path: str) -> None:
     """Deliver the generated report if its YAML config has a 'delivery' section."""

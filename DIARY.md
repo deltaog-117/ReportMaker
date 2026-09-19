@@ -20,6 +20,7 @@
 | 2026-09-11 | Multi-Format Export | One Renderer Per Format | ✅ Confirmed |
 | 2026-09-15 | Configuration Validation | Pydantic + Semantic Pre-Flight Checks | ✅ Confirmed |
 | 2026-09-15 | Delivery Options | Feature-First Channel Abstraction, Wired via `main.py` | ✅ Confirmed |
+| 2026-09-19 | GUI Interface | NiceGUI Python-Only Web UI (`reportmaker gui`) | ✅ Confirmed |
 
 ---
 
@@ -990,3 +991,102 @@ The roadmap's Medium Priority "Delivery Options" item asked for local file save 
 | Date | Update | Author |
 |------|--------|--------|
 | 2026-09-15 | Initial decision and implementation for both Configuration Validation and Delivery Options | deltaog-117 |
+
+
+---
+
+### GUI Interface
+
+**Date:** 2026-09-19
+**Status:** ✅ Confirmed
+
+---
+
+#### Context / Background
+
+ReportMaker was CLI-only, which keeps less technically inclined users away even though the people who most need reports are often exactly those users. The goal was a front-end that lets someone run a report, see the result, schedule it, and manage templates without touching a terminal, while keeping the CLI fully functional and the feature-first architecture intact (deleting the new folder must leave everything else working).
+
+---
+
+#### Options Considered
+
+**Option A: Native desktop app (PySide6 / Qt)**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | • Feels like a real application (native file pickers, tray notifications) <br> • Works offline with no browser <br> • Packageable as a single executable |
+| **Disadvantages** | • Heavy dependency (~100 MB+) <br> • Fiddly packaging on Windows/macOS <br> • Harder to test <br> • UI cannot be reused for a team-hosted version |
+| **Implementation Difficulty** | Hard |
+
+**Option B: Local web UI (FastAPI + Jinja2 + HTMX)**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | • Reuses Jinja2, already a dependency <br> • Full control over layout <br> • Easy to test with `TestClient` <br> • Same code can later be hosted for a team |
+| **Disadvantages** | • More code: routes, templates, and HTMX wiring all hand-written <br> • Still needs a running process, so users must launch something |
+| **Implementation Difficulty** | Medium |
+
+**Option C: Python-only web framework (NiceGUI)**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | • Fastest to a working MVP <br> • Forms, tables, dialogs, and file upload built in <br> • No HTML/JS to write, and a simulated-browser test fixture ships with it |
+| **Disadvantages** | • Less control over layout <br> • Adds a framework dependency and ties the UI code to it <br> • Requires Python 3.10+ (the project declares 3.9+) |
+| **Implementation Difficulty** | Easy |
+
+---
+
+#### Decision & Rationale
+
+**Chosen Option:** C — NiceGUI
+
+> The maintainer selected Option C; the recommendation offered alongside it had been Option B. The trade-offs accepted with C are the layout control given up and the framework coupling.
+>
+> The coupling is contained rather than spread: everything that decides anything (parameter coercion, cron building, running and delivering, listing outputs, template import/export) lives in NiceGUI-free modules (`parameters.py`, `services.py`) that are unit- and property-tested directly. Only `pages.py` imports NiceGUI, so swapping the front-end later means rewriting one file. The new `gui` feature is a leaf: nothing imports it, and `main.py` imports it lazily inside the `gui` command, so deleting `features/gui/` (or not installing the extra) leaves every other command working.
+>
+> **Design choices made along the way:**
+> - **Forms are generated from the YAML `parameters:` block** (name, type, required, default, description), so a new report needs no GUI code.
+> - **Plain-language schedules** (daily / weekly / monthly / every N minutes) are translated to cron in `build_cron()`; raw cron remains available under "Advanced". Weekdays are emitted as names (`mon`…`sun`) because APScheduler numbers days from Monday while classic cron starts on Sunday. Day-of-month is capped at 28 so a monthly schedule fires every month.
+> - **Localhost only by default.** The app can run arbitrary report SQL, so `--host` defaults to `127.0.0.1` and a warning is logged if it is changed.
+> - **Browser input is never trusted as a path.** Row actions look the clicked name up in the list the server itself produced, uploads are written to a fixed temp filename, and the static route for previews is served by Starlette's `StaticFiles` (a `../` traversal attempt returns 404).
+> - **Reports run on a worker thread** (`run.io_bound`) so the page stays responsive, and the launcher forces matplotlib's `Agg` backend, because `report_generation/services.py` imports `pyplot` without pinning a backend and a desktop GUI backend would try to open a window from the wrong thread.
+> - **`deliver_if_configured()` was added to `delivery`** rather than copying `main._maybe_deliver()` into the GUI. `main.py`'s own helper is unchanged and can adopt it in a later cleanup.
+>
+> **Trade-offs accepted:**
+> - Schedules created in the GUI only fire while `reportmaker schedule start` is running. `SchedulerService` uses a `BlockingScheduler`; hosting it inside the GUI process needs a `BackgroundScheduler` change, deliberately left out of this iteration. The Schedules tab says so.
+> - "Past reports" is a listing of the output directory, not a run-history database. That belongs to the roadmap's "Versioned Report Runs".
+> - There is no visual report editor; the Excel template is the authoring tool.
+
+#### Implementation Notes
+
+**Files added:**
+- `src/reportmaker/features/gui/` — `models.py` (`GuiSettings`, `OutputFile`, `RunOutcome`, `ScheduleRequest`, `Frequency`, `Weekday`), `exceptions.py` (`GuiError`, `ParameterInputError`, which carries every field problem at once), `parameters.py` (form input → typed parameters), `services.py` (run + deliver, list outputs, build cron, create schedule, template import/export bytes), `pages.py` (the only NiceGUI-dependent module).
+- Tests: `tests/unit/features/gui/` (property tests with Hypothesis for parameter coercion, cron generation against APScheduler's real next-fire-time, time parsing), `tests/unit/features/delivery/test_deliver_if_configured.py`, `tests/unit/shared/test_config.py`, `tests/unit/test_main_gui.py`, `tests/integration/features/test_gui.py` (drives the real pages with NiceGUI's simulated browser), `tests/conftest.py`.
+
+**Files modified:**
+- `src/reportmaker/main.py` — new `gui` command (`--host`, `--port`, `--templates-dir`, `--output-dir`, `--schedules-file`, `--no-browser`) with a friendly message if the extra is missing.
+- `src/reportmaker/features/delivery/services.py` — added `deliver_if_configured()`.
+- `src/reportmaker/shared/config.py` — enum normalisation in `save_yaml_config` (see Problems Found).
+- `pyproject.toml` — `gui` extra (`nicegui>=3.0,<4; python_version >= "3.10"`), `pytest-asyncio` in `dev`, `asyncio_mode = "auto"` and `main_file = ""` for pytest.
+
+**Problems found while building it:**
+- **Template import produced unusable YAML** (pre-existing, reproduced on the unmodified commit): `model_dump()` keeps enums as enum objects and `yaml.dump` wrote them as `!!python/object/apply:` tags, which `yaml.safe_load` rejects, so any template imported from Excel failed validation and could not be run. This broke the GUI's main flow, so it was fixed in `_normalize_for_yaml`. Templates imported before the fix must be re-imported.
+- **Excel reports are saved with an `.excel` extension** (pre-existing: the pipeline names files after the format value). The GUI recognises the extension, but the file will not open by double-click. Not changed here.
+- **Python version mismatch:** NiceGUI 3.x needs Python 3.10+, `pyproject.toml` declares `>=3.9`, and `shared/config.py` already uses `str | Path` at definition time, which only works on 3.10+. The extra carries an environment marker.
+- **Four unit tests fail on the unmodified commit** (`test_pandas_transformer_invalid_aggregation`, `test_sqlalchemy_extractor_success`, `test_process_parameters_defaults`, `test_process_parameters_override`); they are unrelated to this change and were left alone.
+
+**Deployment note (rollback):** the GUI is opt-in twice over — it is only installed with the `gui` extra and only started by `reportmaker gui`. Rolling back means not running that command (or uninstalling the extra); nothing else depends on it.
+
+#### References
+
+- [NiceGUI documentation](https://nicegui.io/documentation)
+- [NiceGUI testing (User fixture)](https://nicegui.io/documentation/user)
+- Related decisions: Template Management (Decision 7), Delivery Options (above)
+
+---
+
+#### Review / Update Log
+
+| Date | Update | Author |
+|------|--------|--------|
+| 2026-09-19 | Initial decision and implementation | deltaog-117 |

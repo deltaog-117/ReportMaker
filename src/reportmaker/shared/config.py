@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, date
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict
 
@@ -19,6 +20,9 @@ def _normalize_for_yaml(obj: Any) -> Any:
         return [_normalize_for_yaml(v) for v in obj]
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
+    if isinstance(obj, Enum):
+        # yaml.dump writes enums as !!python/object tags, which safe_load refuses to read back.
+        return obj.value
     return obj
 
 

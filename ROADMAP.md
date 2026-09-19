@@ -13,6 +13,7 @@ Items are organized by priority, not by timeline.
 - ✅ Test skeleton mirroring source (`tests/unit/`, `tests/integration/`)
 - ✅ Linting and type‑checking configuration (`ruff`, `mypy`)
 - ✅ Configuration Validation – `reportmaker validate` command plus semantic pre‑flight checks (cron syntax, Jinja2 syntax, database URL, chart columns) wired into `run` and `schedule add`, so bad configs fail fast with actionable messages instead of a raw traceback or a silent scheduled failure
+- ✅ GUI Interface (MVP) – `reportmaker gui` opens a NiceGUI web app in the browser so non-technical users never need the CLI: run a report from an auto-generated parameter form, preview/download it, browse past reports, add/remove schedules in plain language (no cron required), and import/export Excel templates by upload/download. Optional install: `pip install -e ".[gui]"`
 - ✅ Delivery Options – `delivery` feature with a channel abstraction (`local`, `email`); reports can be copied to a directory or sent as an SMTP email attachment via an optional `delivery:` section in the report YAML, triggered automatically after `run` and after each successful scheduled run
 
 ---
@@ -59,10 +60,10 @@ These features make the tool more useful and professional.
 
 Enhancements that add polish but are not required for the first release.
 
-- **GUI Interface** – A simple desktop or web interface to:
-  - Create, edit, and preview reports.
-  - View history and logs.
-  - Trigger manual runs.
+- **GUI Interface – follow-ups** – The MVP shipped (see Completed). Remaining:
+  - Create and edit report definitions visually (today: fill in the Excel template and upload it).
+  - Run the scheduler inside the GUI process, so schedules fire without a separate `reportmaker schedule start`.
+  - View run logs and enable/disable existing schedules.
 
 - **Dashboard Integration** – Push report data to Power BI, Tableau, or other dashboards via APIs.
 

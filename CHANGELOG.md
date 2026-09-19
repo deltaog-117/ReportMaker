@@ -8,12 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `gui` feature and `reportmaker gui` command: a browser-based interface (NiceGUI) for non-technical users. Run a report from an auto-generated parameter form, preview or download the result, browse past reports, add and remove schedules using plain-language choices (daily/weekly/monthly/every N minutes) instead of cron, and import, export, or delete Excel templates. Serves on `127.0.0.1` only by default. Install with `pip install -e ".[gui]"` (requires Python 3.10+); the CLI is unaffected when the extra is not installed.
+- `deliver_if_configured()` in the `delivery` feature: delivers a report when its YAML has a `delivery:` section, returning `None` when it doesn't and a failed result (instead of raising) when the section is malformed.
+- `pytest-asyncio` dev dependency and `tests/conftest.py` so the GUI pages can be tested with NiceGUI's simulated browser.
 - `reportmaker validate --config <path>` command to check a report configuration without generating a report.
 - Semantic configuration validation beyond Pydantic's structural checks: database URL, Jinja2 syntax, cron expression, and chart column validity, wired into `run` and `schedule add` so invalid configs fail fast with actionable messages.
 - `delivery` feature: reports can be delivered via a `delivery:` section in the report YAML — copied to a local directory (`channel: local`) or sent as an SMTP email attachment (`channel: email`) — triggered automatically after `run` and after each successful scheduled run.
 - `.gitignore` for the Python project (was previously missing, resulting in `__pycache__` and compiled `.pyc` files being tracked).
 
 ### Fixed
+- Templates imported from Excel (`reportmaker template import`) could not be validated, exported, or run: enum values (`output`, parameter `type`) were written to YAML as `!!python/object` tags that `yaml.safe_load` refuses to read. `save_yaml_config` now writes enums as plain values. Templates imported before this fix must be re-imported.
 - `schedule start` now raises a clear error message for an invalid cron expression in `schedules.yaml` instead of letting a raw APScheduler exception surface.
 
 ---

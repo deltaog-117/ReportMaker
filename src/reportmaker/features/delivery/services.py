@@ -7,7 +7,9 @@ from pathlib import Path
 from smtplib import SMTP
 from typing import Optional, Tuple
 
-from reportmaker.shared.config import get_env
+from pydantic import ValidationError
+
+from reportmaker.shared.config import get_env, load_yaml_config
 from reportmaker.shared.file_utils import ensure_directory
 from reportmaker.shared.logging import get_logger
 from reportmaker.features.delivery.exceptions import DeliveryError, EmailDeliveryError
@@ -114,3 +116,31 @@ def deliver_report(report_path: str, config: DeliveryConfig) -> DeliveryResult:
     if handler is None:
         return DeliveryResult(success=True, channel=DeliveryChannel.NONE, destination=None)
     return handler.deliver(report_path, config)
+
+
+def deliver_if_configured(config_path: str, report_path: str) -> Optional[DeliveryResult]:
+    """Deliver a report if its YAML config has a ``delivery`` section.
+
+    Returns None when the config declares no delivery, so callers can tell
+    "nothing to do" apart from a delivery that succeeded or failed. A
+    malformed section is reported as a failed result rather than raised: the
+    report itself was generated fine, so the user still needs to see it.
+    """
+    raw_delivery = (load_yaml_config(config_path) or {}).get("delivery")
+    if not raw_delivery:
+        return None
+    if not isinstance(raw_delivery, dict):
+        return DeliveryResult(
+            success=False,
+            channel=DeliveryChannel.NONE,
+            error="Invalid delivery configuration: 'delivery' must be a mapping",
+        )
+    try:
+        delivery_config = DeliveryConfig(**raw_delivery)
+    except ValidationError as e:
+        return DeliveryResult(
+            success=False,
+            channel=DeliveryChannel.NONE,
+            error=f"Invalid delivery configuration: {e}",
+        )
+    return deliver_report(report_path, delivery_config)
