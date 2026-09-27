@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Project check gate: currently pytest only.
+#
+# ruff/mypy are configured in pyproject.toml but aren't wired in here yet:
+# ruff's ruleset (E,F,W,I,N,D,S) flags ~600 pre-existing findings across the
+# codebase (mostly D103/S101 on ordinary pytest asserts and undocumented test
+# functions), and mypy's config targets python_version=3.9, which the
+# installed mypy no longer supports, on top of missing yaml/apscheduler
+# stubs. Revisit once that debt and the mypy config are addressed.
+set -euo pipefail
+
+VENV_PYTHON="$(dirname "$0")/../venv/bin/python"
+if [ -x "$VENV_PYTHON" ]; then
+    PYTHON="$VENV_PYTHON"
+else
+    PYTHON="python3"
+fi
+
+"$PYTHON" -m pytest -q

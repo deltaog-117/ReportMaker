@@ -34,3 +34,14 @@ class ScheduleStatus(BaseModel):
     trigger_value: str  # human-readable description
     last_run: Optional[datetime]
     next_run: Optional[datetime]
+
+
+class RunRecord(BaseModel):
+    """One completed schedule run, kept for the GUI's run-history view."""
+
+    schedule_name: str
+    started_at: datetime
+    duration_seconds: float = Field(..., ge=0)
+    success: bool
+    output_path: Optional[str] = Field(None, description="Set when the run succeeded")
+    error: Optional[str] = Field(None, description="Set when the run failed")

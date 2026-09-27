@@ -25,6 +25,7 @@ from reportmaker.features.gui.services import (
     build_cron,
     classify_output,
     create_schedule,
+    deliver_after_schedule_run,
     export_template_bytes,
     format_size,
     import_uploaded_template,
@@ -34,6 +35,7 @@ from reportmaker.features.gui.services import (
 )
 from reportmaker.features.report_generation.exceptions import ConfigError
 from reportmaker.features.report_generation.models import ReportResult
+from reportmaker.features.scheduling.models import ScheduleConfig
 from reportmaker.features.scheduling.services import SchedulerService
 from reportmaker.features.template_management.services import TemplateManager
 from reportmaker.shared.validators import validate_cron_expression
@@ -132,12 +134,26 @@ def test_create_schedule_stores_an_absolute_report_path(tmp_path):
         minute=15,
     )
 
-    create_schedule(schedules_file, request, {"region": "EU"})
+    create_schedule(SchedulerService(str(schedules_file)), request, {"region": "EU"})
 
     stored = yaml.safe_load(schedules_file.read_text())["nightly"]
     assert stored["cron"] == "15 7 * * *"
     assert stored["parameters"] == {"region": "EU"}
     assert Path(stored["report_config"]).is_absolute()
+
+
+def test_create_schedule_takes_effect_on_a_running_scheduler(tmp_path):
+    config = write_report_config(tmp_path / "report.yaml")
+    request = ScheduleRequest(
+        name="nightly", report_config=str(config), frequency=Frequency.DAILY
+    )
+    scheduler = SchedulerService(str(tmp_path / "schedules.yaml"))
+    scheduler.start_background()
+    try:
+        create_schedule(scheduler, request, {})
+        assert scheduler.scheduler.get_job("schedule_nightly") is not None
+    finally:
+        scheduler.stop()
 
 
 def test_create_schedule_supports_intervals(tmp_path):
@@ -148,7 +164,7 @@ def test_create_schedule_supports_intervals(tmp_path):
         frequency=Frequency.INTERVAL,
         every_minutes=15,
     )
-    create_schedule(tmp_path / "schedules.yaml", request, {})
+    create_schedule(SchedulerService(str(tmp_path / "schedules.yaml")), request, {})
     (status,) = SchedulerService(str(tmp_path / "schedules.yaml")).list_schedules()
     assert status.trigger_value == "every 900s"
 
@@ -158,9 +174,9 @@ def test_create_schedule_rejects_duplicate_names(tmp_path):
     request = ScheduleRequest(
         name="dup", report_config=str(config), frequency=Frequency.DAILY
     )
-    create_schedule(tmp_path / "schedules.yaml", request, {})
+    create_schedule(SchedulerService(str(tmp_path / "schedules.yaml")), request, {})
     with pytest.raises(GuiError, match="already exists"):
-        create_schedule(tmp_path / "schedules.yaml", request, {})
+        create_schedule(SchedulerService(str(tmp_path / "schedules.yaml")), request, {})
 
 
 def test_create_schedule_rejects_a_bad_cron_expression(tmp_path):
@@ -172,7 +188,7 @@ def test_create_schedule_rejects_a_bad_cron_expression(tmp_path):
         custom_cron="not cron",
     )
     with pytest.raises(GuiError, match="cron"):
-        create_schedule(tmp_path / "schedules.yaml", request, {})
+        create_schedule(SchedulerService(str(tmp_path / "schedules.yaml")), request, {})
     assert not (tmp_path / "schedules.yaml").exists()
 
 
@@ -183,7 +199,28 @@ def test_create_schedule_rejects_an_invalid_report_config(tmp_path):
         name="x", report_config=str(broken), frequency=Frequency.DAILY
     )
     with pytest.raises(GuiError, match="invalid report configuration"):
-        create_schedule(tmp_path / "schedules.yaml", request, {})
+        create_schedule(SchedulerService(str(tmp_path / "schedules.yaml")), request, {})
+
+
+# ---------- Schedule delivery ----------
+def test_deliver_after_schedule_run_delivers_when_output_exists(tmp_path):
+    cfg = ScheduleConfig(name="n", cron="0 9 * * *", report_config="cfg.yaml")
+    result = ReportResult(success=True, output_path=str(tmp_path / "r.pdf"))
+    with patch(
+        "reportmaker.features.gui.services.deliver_if_configured"
+    ) as deliver:
+        deliver_after_schedule_run(cfg, result)
+    deliver.assert_called_once_with("cfg.yaml", str(tmp_path / "r.pdf"))
+
+
+def test_deliver_after_schedule_run_skips_when_no_output():
+    cfg = ScheduleConfig(name="n", cron="0 9 * * *", report_config="cfg.yaml")
+    result = ReportResult(success=False, error="query failed")
+    with patch(
+        "reportmaker.features.gui.services.deliver_if_configured"
+    ) as deliver:
+        deliver_after_schedule_run(cfg, result)
+    deliver.assert_not_called()
 
 
 # ---------- Past reports ----------

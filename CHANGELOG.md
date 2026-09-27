@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The GUI's scheduler now runs inside the `reportmaker gui` process itself (an APScheduler `BackgroundScheduler`, started and stopped with the app), so schedules fire without a separate `reportmaker schedule start`. A schedule added, removed, or toggled from the Schedules tab takes effect on that same running scheduler immediately, instead of only after a restart.
+- Enable/disable toggle per schedule in the Schedules tab, backed by `SchedulerService.set_enabled()`.
+- A bounded run-history log (`run_history.yaml`, `RunHistoryStore`, capped at 200 records) and a "view run history" dialog per schedule, showing each run's outcome, duration, and output path or error.
+- Scheduled reports run from the GUI are now delivered the same way as the CLI daemon's: `gui.services.deliver_after_schedule_run()` honours a report's `delivery:` section.
+- `scripts/check` (currently `pytest -q`; lint/type checks are pending a separate cleanup of pre-existing `ruff`/`mypy` debt — see Fixed).
 - `gui` feature and `reportmaker gui` command: a browser-based interface (NiceGUI) for non-technical users. Run a report from an auto-generated parameter form, preview or download the result, browse past reports, add and remove schedules using plain-language choices (daily/weekly/monthly/every N minutes) instead of cron, and import, export, or delete Excel templates. Serves on `127.0.0.1` only by default. Install with `pip install -e ".[gui]"` (requires Python 3.10+); the CLI is unaffected when the extra is not installed.
 - `deliver_if_configured()` in the `delivery` feature: delivers a report when its YAML has a `delivery:` section, returning `None` when it doesn't and a failed result (instead of raising) when the section is malformed.
 - `pytest-asyncio` dev dependency and `tests/conftest.py` so the GUI pages can be tested with NiceGUI's simulated browser.
@@ -17,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.gitignore` for the Python project (was previously missing, resulting in `__pycache__` and compiled `.pyc` files being tracked).
 
 ### Fixed
+- Four pre-existing, unrelated test failures blocking the new `scripts/check` (`test_pandas_transformer_invalid_aggregation`, `test_sqlalchemy_extractor_success`, `test_process_parameters_defaults`, `test_process_parameters_override`): two asserted outcomes that contradicted their own sibling tests or the implementation's contract, and two referenced a `get_engine` name `report_generation/services.py` never had and an outdated `.extract()` call signature. No production code changed.
 - Templates imported from Excel (`reportmaker template import`) could not be validated, exported, or run: enum values (`output`, parameter `type`) were written to YAML as `!!python/object` tags that `yaml.safe_load` refuses to read. `save_yaml_config` now writes enums as plain values. Templates imported before this fix must be re-imported.
 - `schedule start` now raises a clear error message for an invalid cron expression in `schedules.yaml` instead of letting a raw APScheduler exception surface.
 

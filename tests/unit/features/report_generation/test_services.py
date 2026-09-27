@@ -37,14 +37,13 @@ def test_pandas_transformer_invalid_aggregation():
     config = ReportConfig(
         name="test",
         data_source=DataSourceConfig(url="", query=""),
-        transform=TransformConfig(group_by=["product"], aggregations={"revenue": "invalid"})
+        transform=TransformConfig(group_by=["product"], aggregations={"revenue": "sum"})
     )
     transformer = PandasTransformer()
-    # The transformer doesn't validate, it just passes to pandas; we expect pandas to raise an error.
-    # But we have validation in the model, so this shouldn't happen. We'll test with a valid but wrong function.
-    # For actual error, we can use a non-existent function:
+    # TransformConfig only validates known aggregation names at construction time;
+    # bypass that with a direct attribute set to exercise the transformer's own
+    # error handling for a function pandas itself rejects.
     with pytest.raises(DataTransformationError):
-        # Override aggregations to force a bad function
         config.transform.aggregations = {"revenue": "non_existent"}
         transformer.transform(df, config)
 
@@ -68,9 +67,9 @@ def test_groupby_preserves_total_sum(data):
 
 # ---------- Extractor Tests (mocked) ----------
 def test_sqlalchemy_extractor_success():
-    with patch("reportmaker.features.report_generation.services.get_engine") as mock_engine:
+    with patch("reportmaker.features.report_generation.services.create_engine") as mock_create_engine:
         mock_conn = MagicMock()
-        mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+        mock_create_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
         mock_conn.execute.return_value = MagicMock()
         # Mock pd.read_sql to return a DataFrame
         with patch("pandas.read_sql") as mock_read_sql:
@@ -78,7 +77,7 @@ def test_sqlalchemy_extractor_success():
             mock_read_sql.return_value = df
             extractor = SQLAlchemyExtractor()
             config = ReportConfig(name="test", data_source=DataSourceConfig(url="", query="SELECT 1"))
-            result = extractor.extract(config)
+            result = extractor.extract(config, {})
             assert result.equals(df)
 
 

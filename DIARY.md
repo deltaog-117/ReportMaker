@@ -21,6 +21,7 @@
 | 2026-09-15 | Configuration Validation | Pydantic + Semantic Pre-Flight Checks | ✅ Confirmed |
 | 2026-09-15 | Delivery Options | Feature-First Channel Abstraction, Wired via `main.py` | ✅ Confirmed |
 | 2026-09-19 | GUI Interface | NiceGUI Python-Only Web UI (`reportmaker gui`) | ✅ Confirmed |
+| 2026-09-27 | Embedded Scheduler in the GUI | `BackgroundScheduler` Singleton on GUI Lifecycle Hooks | ✅ Confirmed |
 
 ---
 
@@ -1090,3 +1091,94 @@ ReportMaker was CLI-only, which keeps less technically inclined users away even 
 | Date | Update | Author |
 |------|--------|--------|
 | 2026-09-19 | Initial decision and implementation | deltaog-117 |
+
+---
+
+### Embedded Scheduler in the GUI
+
+**Date:** 2026-09-27
+**Status:** ✅ Confirmed
+
+---
+
+#### Context / Background
+
+The GUI Interface decision (above) shipped with two documented gaps: schedules created in the GUI only fired while `reportmaker schedule start` ran as a separate process, and — not documented at the time, but true of the same code — even that daemon wouldn't have learned about a schedule added through the GUI while it was already running, because `create_schedule()` built a throwaway `SchedulerService` per call. Closing the ROADMAP's "GUI Interface – follow-ups" item meant running the scheduler inside the GUI process itself, plus adding enable/disable and a run-history view to the Schedules tab, so schedules actually fire without any second command.
+
+---
+
+#### Options Considered
+
+**Option A: `BackgroundScheduler` singleton, started/stopped on the GUI's lifecycle hooks**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Near drop-in swap in `SchedulerService` (same `.start()`/`.add_job()`/`.shutdown()` API as `BlockingScheduler`); fully decoupled from NiceGUI's asyncio loop; easy to unit-test in isolation |
+| **Disadvantages** | One extra dedicated thread just for the scheduler's own wakeup timer |
+| **Implementation Difficulty** | Small |
+
+**Option B: `AsyncIOScheduler` tied to NiceGUI's own event loop**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | One fewer thread; "native" fit since NiceGUI runs on FastAPI/uvicorn's asyncio loop |
+| **Disadvantages** | Diverges from the CLI daemon's `BlockingScheduler` code path; trickier lifecycle/loop-ownership; harder to unit-test outside a running loop |
+| **Implementation Difficulty** | Medium |
+
+**Option C: Keep `BlockingScheduler`, spawn it manually in a daemon `threading.Thread`**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | No change to the scheduler class itself |
+| **Disadvantages** | Re-implements by hand what APScheduler already ships as `BackgroundScheduler` |
+| **Implementation Difficulty** | Small |
+
+---
+
+#### Decision & Rationale
+
+**Chosen Option:** A — `BackgroundScheduler` singleton
+
+> APScheduler ships `BackgroundScheduler` specifically for "run inside a host app, don't block, don't own the app's own loop" — exactly this case. Both A and B dispatch actual job execution to a worker-thread executor regardless of scheduler type, so B's "one fewer thread" saving buys nothing here, only more coupling to NiceGUI's lifecycle.
+>
+> **Design choices made along the way:**
+> - **`SchedulerService` gained `start_background()` and `stop()`** alongside the existing `start(foreground=True)`, sharing a new `_populate_jobs()` helper. The CLI daemon (`reportmaker schedule start`) is untouched — it still uses `start()`/`BlockingScheduler`.
+> - **`register_pages()` now owns one `SchedulerService` for the whole GUI process**, started via `start_background()` and stopped via `app.on_shutdown`. It's threaded through to every `_Dashboard` instance (one per browser tab) instead of each tab constructing its own. This is what actually closes the gap above: `create_schedule()` was changed to take that live `SchedulerService` instead of a `schedules_file` path, so a schedule added from the GUI is registered on the *same* running scheduler immediately, not just written to disk for a future restart to pick up.
+> - **Run history lives in a new bounded YAML file (`run_history.yaml`)**, next to `schedules.yaml`, via a new `RunHistoryStore` (capped at 200 records, newest first). It's deliberately not stored through `shared/db.py`'s SQLAlchemy engine: that engine's `DATABASE_URL` is reserved for whatever external database a *report's own query* targets, so writing our own bookkeeping through it would mix user-owned data with app state and risk touching a read-only or production DB the user pointed a report at.
+> - **Enable/disable reaches the live scheduler too**: `SchedulerService.set_enabled()` adds or removes the APScheduler job immediately when the scheduler is running, not just on the next restart. The Schedules tab's per-row toggle calls it directly.
+> - **Scheduled runs deliver, same as the CLI daemon.** `gui.services.deliver_after_schedule_run()` is wired as `SchedulerService`'s `on_report_generated` hook, mirroring what `main.py` already does for `schedule start`, so a `delivery:` section in a report's YAML is honoured regardless of which process is running the scheduler.
+>
+> **Trade-offs accepted:**
+> - Run history is one flat, capped file — a log for a human to skim in a dialog, not a queryable audit trail. A future "Versioned Report Runs" feature (see ROADMAP's long-term vision) would need a real store if that ever matters at scale.
+> - A history-write failure is caught and logged rather than raised, so a bug in the history path can never take down a scheduled report; this is a deliberate, narrow exception-swallowing spot, not a general pattern.
+
+#### Implementation Notes
+
+**Files added:**
+- `src/reportmaker/features/scheduling/repositories.py` — `RunHistoryStore` (bounded, file-backed run log; was an empty stub before this).
+- `tests/unit/features/scheduling/test_repositories.py`, `test_services.py`, `test_models.py` — filled in the previously-empty stubs.
+
+**Files modified:**
+- `src/reportmaker/features/scheduling/models.py` — added `RunRecord`.
+- `src/reportmaker/features/scheduling/services.py` — added `start_background()`, `stop()`, `set_enabled()`, `list_run_history()`, `_populate_jobs()`, `_record_run()`; `_job_function()` now times each run and appends a `RunRecord` on every outcome (success, failure, or exception); removed dead code in the old `start()` (a `foreground` ternary that always built the same `BlockingScheduler`, and an unreachable `self.scheduler._thread.join()` — `BlockingScheduler.start()` already blocks the calling thread, so that line could never run).
+- `src/reportmaker/features/gui/services.py` — `create_schedule()` now takes a `SchedulerService` instead of a `schedules_file` path; added `deliver_after_schedule_run()`.
+- `src/reportmaker/features/gui/pages.py` — `register_pages()` builds and starts the shared scheduler; `_Dashboard` takes it as a constructor argument; Schedules tab gained an "Enabled" toggle column and a "View run history" action/dialog; the old "start it from a terminal" banner was replaced.
+
+**Problems found while building it:**
+- **Four unit tests were failing on the unmodified commit** (`test_pandas_transformer_invalid_aggregation`, `test_sqlalchemy_extractor_success`, `test_process_parameters_defaults`, `test_process_parameters_override`) — flagged as pre-existing and left alone in the GUI Interface decision (above). They blocked adopting `scripts/check` (see below), so they were fixed here: two had assertions that contradicted their own sibling tests or the implementation's documented contract (a `.date()` vs `datetime` mismatch, and a call that expected both success and failure from identical arguments), and two referenced a `get_engine` name `report_generation/services.py` never had (it calls `create_engine` directly) and a stale `.extract()` call missing its `parameters` argument. No production code changed for these.
+- **`scripts/check` did not exist yet.** Created it as `pytest -q` only; `ruff check`'s configured ruleset (`E,F,W,I,N,D,S`) currently flags roughly 600 pre-existing findings across the codebase (mostly `D103`/`S101` on ordinary pytest asserts and undocumented test functions), and `mypy`'s `python_version = "3.9"` is no longer supported by the installed `mypy`, on top of missing `yaml`/`apscheduler` stubs. Both are left for a dedicated cleanup pass rather than folded into this feature.
+
+**Deployment note (rollback):** the embedded scheduler is inseparable from `reportmaker gui` itself — it starts and stops with that command's process. The CLI daemon (`reportmaker schedule start`) is unchanged and still works as its own, separate way to run schedules without the GUI at all.
+
+#### References
+
+- [APScheduler: choosing the right scheduler](https://apscheduler.readthedocs.io/en/3.x/userguide.html#choosing-the-right-scheduler-job-store-s-executor-s-and-trigger-s)
+- Related decisions: Scheduling Implementation (Decision 5), GUI Interface (above)
+
+---
+
+#### Review / Update Log
+
+| Date | Update | Author |
+|------|--------|--------|
+| 2026-09-27 | Initial decision and implementation | deltaog-117 |

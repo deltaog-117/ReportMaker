@@ -25,6 +25,7 @@ from reportmaker.features.gui.parameters import build_parameters, field_label
 from reportmaker.features.gui.services import (
     blank_template_bytes,
     create_schedule,
+    deliver_after_schedule_run,
     export_template_bytes,
     format_size,
     import_uploaded_template,
@@ -34,6 +35,7 @@ from reportmaker.features.gui.services import (
 )
 from reportmaker.features.report_generation.models import ParameterSchema, ParameterType
 from reportmaker.features.scheduling.exceptions import ScheduleNotFoundError
+from reportmaker.features.scheduling.models import RunRecord
 from reportmaker.features.scheduling.services import SchedulerService
 from reportmaker.features.template_management.exceptions import (
     TemplateNotFoundError,
@@ -57,6 +59,13 @@ _TRUE_WORDS = ("true", "1", "yes", "on")
 _ACTION_SLOT = """
 <q-td :props="props" auto-width>
   {buttons}
+</q-td>
+"""
+
+_TOGGLE_SLOT = """
+<q-td :props="props" auto-width>
+  <q-toggle :model-value="props.row.enabled" @update:model-value="val =>
+    $parent.$emit('toggle', {name: props.row.name, enabled: val})" />
 </q-td>
 """
 
@@ -154,9 +163,10 @@ class ParameterForm:
 class _Dashboard:
     """One browser tab's view of the app. A new instance is built per visit."""
 
-    def __init__(self, settings: GuiSettings) -> None:
-        """Bind the dashboard to the folders and files named in settings."""
+    def __init__(self, settings: GuiSettings, scheduler: SchedulerService) -> None:
+        """Bind the dashboard to the folders, files, and scheduler named in settings."""
         self._settings = settings
+        self._scheduler = scheduler
         self._manager = TemplateManager(str(settings.templates_dir))
         self._template_selects: List[ui.select] = []
 
@@ -400,15 +410,15 @@ class _Dashboard:
     def _schedules_panel(self) -> None:
         ui.label("Have a report run by itself on a schedule.").classes("text-subtitle1")
         ui.label(
-            "Schedules only fire while the scheduler is running. "
-            "Start it from a terminal with: reportmaker schedule start"
-        ).classes("bg-amber-1 text-amber-10 q-pa-sm rounded")
+            "The scheduler runs automatically while this app is open — "
+            "no separate command needed."
+        ).classes("bg-green-1 text-green-10 q-pa-sm rounded")
         self._schedule_list()
         self._schedule_form()
 
     @ui.refreshable
     def _schedule_list(self) -> None:
-        statuses = SchedulerService(str(self._settings.schedules_file)).list_schedules()
+        statuses = self._scheduler.list_schedules()
         if not statuses:
             ui.label("No schedules yet.").classes("text-grey")
             return
@@ -419,6 +429,7 @@ class _Dashboard:
                 "last_run": s.last_run.strftime("%Y-%m-%d %H:%M")
                 if s.last_run
                 else "Never",
+                "enabled": s.enabled,
             }
             for s in statuses
         ]
@@ -431,23 +442,87 @@ class _Dashboard:
                 "field": "last_run",
                 "align": "left",
             },
+            {
+                "name": "enabled",
+                "label": "Enabled",
+                "field": "enabled",
+                "align": "center",
+            },
             {"name": "actions", "label": "", "field": "name"},
         ]
         table = ui.table(columns=columns, rows=rows, row_key="name").classes("w-full")
-        table.add_slot(
-            "body-cell-actions",
-            _ACTION_SLOT.format(buttons=_action_button("remove", "delete", "Remove")),
-        )
+        table.add_slot("body-cell-enabled", _TOGGLE_SLOT)
+        buttons = _action_button("history", "history", "View run history")
+        buttons += _action_button("remove", "delete", "Remove")
+        table.add_slot("body-cell-actions", _ACTION_SLOT.format(buttons=buttons))
         table.on(
             "remove", lambda e: self._confirm_remove_schedule(e.args.get("name", ""))
         )
+        table.on("history", lambda e: self._show_run_history(e.args.get("name", "")))
+        table.on("toggle", self._on_toggle_schedule)
+
+    def _on_toggle_schedule(self, e: events.GenericEventArguments) -> None:
+        name = e.args.get("name", "")
+        enabled = bool(e.args.get("enabled"))
+        try:
+            self._scheduler.set_enabled(name, enabled)
+        except ScheduleNotFoundError as err:
+            ui.notify(str(err), type="warning")
+        self._schedule_list.refresh()
+
+    def _show_run_history(self, name: str) -> None:
+        records: List[RunRecord] = self._scheduler.list_run_history(name, limit=20)
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl"):
+            ui.label(f"Run history: {name}").classes("text-h6")
+            if not records:
+                ui.label("No runs recorded yet.").classes("text-grey")
+            else:
+                rows = [
+                    {
+                        "started_at": r.started_at.strftime("%Y-%m-%d %H:%M"),
+                        "outcome": "Success" if r.success else "Failed",
+                        "duration": f"{r.duration_seconds:.1f}s",
+                        "detail": r.output_path if r.success else (r.error or ""),
+                    }
+                    for r in records
+                ]
+                columns = [
+                    {
+                        "name": "started_at",
+                        "label": "Started",
+                        "field": "started_at",
+                        "align": "left",
+                    },
+                    {
+                        "name": "outcome",
+                        "label": "Outcome",
+                        "field": "outcome",
+                        "align": "left",
+                    },
+                    {
+                        "name": "duration",
+                        "label": "Duration",
+                        "field": "duration",
+                        "align": "right",
+                    },
+                    {
+                        "name": "detail",
+                        "label": "Detail",
+                        "field": "detail",
+                        "align": "left",
+                    },
+                ]
+                ui.table(
+                    columns=columns, rows=rows, row_key="started_at"
+                ).classes("w-full")
+            ui.button("Close", on_click=dialog.close).props("flat")
+        dialog.on("hide", dialog.delete)
+        dialog.open()
 
     def _confirm_remove_schedule(self, name: str) -> None:
         def remove() -> None:
             try:
-                SchedulerService(str(self._settings.schedules_file)).remove_schedule(
-                    name
-                )
+                self._scheduler.remove_schedule(name)
             except ScheduleNotFoundError as e:
                 ui.notify(str(e), type="warning")
             dialog.close()
@@ -542,9 +617,7 @@ class _Dashboard:
                         every_minutes=int(minutes.value) if minutes.value else None,
                         custom_cron=cron.value or None,
                     )
-                    create_schedule(
-                        self._settings.schedules_file, request, form.collect()
-                    )
+                    create_schedule(self._scheduler, request, form.collect())
                 except (ValueError, GuiError) as e:
                     ui.notify(str(e), type="negative", multi_line=True)
                     return
@@ -662,13 +735,19 @@ class _Dashboard:
 
 
 def register_pages(settings: GuiSettings) -> None:
-    """Serve generated reports for preview and register the main page."""
+    """Serve generated reports, start the scheduler, and register the main page."""
     ensure_directory(settings.output_dir)
     app.add_static_files(REPORTS_URL, str(settings.output_dir.resolve()))
 
+    scheduler = SchedulerService(
+        str(settings.schedules_file), on_report_generated=deliver_after_schedule_run
+    )
+    scheduler.start_background()
+    app.on_shutdown(scheduler.stop)
+
     @ui.page("/")
     def index() -> None:
-        _Dashboard(settings).build()
+        _Dashboard(settings, scheduler).build()
 
 
 def run_app(settings: GuiSettings) -> None:

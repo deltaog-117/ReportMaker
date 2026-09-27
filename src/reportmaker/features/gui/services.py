@@ -155,9 +155,13 @@ def parse_time_of_day(text: str) -> Tuple[int, int]:
 
 
 def create_schedule(
-    schedules_file: Path, request: ScheduleRequest, parameters: Dict[str, Any]
+    scheduler: SchedulerService, request: ScheduleRequest, parameters: Dict[str, Any]
 ) -> None:
-    """Validate and store a new schedule.
+    """Validate and store a new schedule on the given scheduler.
+
+    Takes the scheduler instance (rather than a schedules-file path) so a
+    schedule added while the GUI's own scheduler is running is picked up
+    immediately, instead of only after the next restart.
 
     Raises:
         GuiError: with a user-facing message if the cron expression, the
@@ -183,10 +187,21 @@ def create_schedule(
             report_config=report_config,
             parameters=parameters,
         )
-        SchedulerService(str(schedules_file)).add_schedule(config)
+        scheduler.add_schedule(config)
     except (ValueError, ConfigError, SchedulingError) as e:
         raise GuiError(str(e)) from e
     logger.info(f"GUI created schedule '{request.name}'")
+
+
+def deliver_after_schedule_run(cfg: ScheduleConfig, result: ReportResult) -> None:
+    """Deliver a scheduled report the same way an interactive run would.
+
+    Passed to ``SchedulerService`` as its ``on_report_generated`` hook so a
+    report scheduled from the GUI honours its config's ``delivery:`` section
+    just like the CLI's ``schedule start`` daemon does.
+    """
+    if result.output_path:
+        deliver_if_configured(cfg.report_config, result.output_path)
 
 
 # ---------- Templates ----------

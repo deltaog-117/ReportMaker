@@ -171,6 +171,14 @@ async def test_an_invalid_schedule_is_explained_and_not_saved(
     assert not gui_settings.schedules_file.exists()
 
 
+async def test_schedules_tab_shows_the_always_on_scheduler_banner(
+    user: User, gui_settings: GuiSettings
+) -> None:
+    register_pages(gui_settings)
+    await user.open("/")
+    await user.should_see("runs automatically")
+
+
 async def test_templates_tab_lists_stored_templates(
     user: User, gui_settings: GuiSettings
 ) -> None:

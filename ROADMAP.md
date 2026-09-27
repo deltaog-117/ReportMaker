@@ -15,6 +15,7 @@ Items are organized by priority, not by timeline.
 - ✅ Configuration Validation – `reportmaker validate` command plus semantic pre‑flight checks (cron syntax, Jinja2 syntax, database URL, chart columns) wired into `run` and `schedule add`, so bad configs fail fast with actionable messages instead of a raw traceback or a silent scheduled failure
 - ✅ GUI Interface (MVP) – `reportmaker gui` opens a NiceGUI web app in the browser so non-technical users never need the CLI: run a report from an auto-generated parameter form, preview/download it, browse past reports, add/remove schedules in plain language (no cron required), and import/export Excel templates by upload/download. Optional install: `pip install -e ".[gui]"`
 - ✅ Delivery Options – `delivery` feature with a channel abstraction (`local`, `email`); reports can be copied to a directory or sent as an SMTP email attachment via an optional `delivery:` section in the report YAML, triggered automatically after `run` and after each successful scheduled run
+- ✅ GUI Interface – embedded scheduler – `reportmaker gui` now runs a `BackgroundScheduler` inside its own process, so schedules fire without a separate `reportmaker schedule start`; a schedule added, removed, or toggled from the GUI takes effect on that same running scheduler immediately. The Schedules tab gained an enable/disable toggle per schedule and a "view run history" dialog backed by a new bounded run-history log
 
 ---
 
@@ -60,10 +61,8 @@ These features make the tool more useful and professional.
 
 Enhancements that add polish but are not required for the first release.
 
-- **GUI Interface – follow-ups** – The MVP shipped (see Completed). Remaining:
+- **GUI Interface – follow-ups** – The MVP shipped, and the in-process scheduler, run logs, and enable/disable followed (see Completed). Remaining:
   - Create and edit report definitions visually (today: fill in the Excel template and upload it).
-  - Run the scheduler inside the GUI process, so schedules fire without a separate `reportmaker schedule start`.
-  - View run logs and enable/disable existing schedules.
 
 - **Dashboard Integration** – Push report data to Power BI, Tableau, or other dashboards via APIs.
 
