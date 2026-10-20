@@ -116,6 +116,48 @@ class TemplateManager:
             yaml_path=yaml_path,
         )
 
+    def save_config(
+        self,
+        config: ReportConfig,
+        name: Optional[str] = None,
+        force: bool = False,
+    ) -> Path:
+        """Store a validated config as a YAML template and return its path.
+
+        ``name`` pins the file name (used when editing, so renaming the report
+        inside does not orphan the file); it defaults to ``config.name``.
+        Top-level keys the model does not know about, such as ``delivery:``,
+        are carried over from the file being replaced so an edit never
+        silently drops them.
+
+        Raises:
+            TemplateValidationError: if no usable file name can be derived.
+            TemplateAlreadyExistsError: if the file exists and ``force`` is off.
+        """
+        stem = safe_filename(config.name if name is None else name).replace(" ", "_").lower()
+        if not stem.strip("._-"):
+            raise TemplateValidationError("Template name needs letters or digits")
+        path = self._template_path(stem)
+
+        extras: Dict[str, Any] = {}
+        if path.exists():
+            if not force:
+                raise TemplateAlreadyExistsError(
+                    f"Template '{stem}' already exists at {path}"
+                )
+            try:
+                existing = load_yaml_config(path)
+            except Exception:
+                logger.warning(f"Replacing unreadable template '{stem}'")
+            else:
+                extras = {
+                    k: v for k, v in existing.items() if k not in ReportConfig.model_fields
+                }
+
+        save_yaml_config({**config.model_dump(exclude_none=True), **extras}, path)
+        logger.info(f"Saved template '{stem}' -> {path}")
+        return path
+
     def export_to_xlsx(self, name: str, output_path: str) -> Path:
         """Export a stored YAML template to an Excel spreadsheet."""
         path = self._template_path(name)

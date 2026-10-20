@@ -14,11 +14,15 @@ from nicegui import app, events, run, ui
 from reportmaker.features.delivery.models import DeliveryChannel
 from reportmaker.features.gui.exceptions import GuiError, ParameterInputError
 from reportmaker.features.gui.models import (
+    AggregationRow,
     Frequency,
     GuiSettings,
     OutputFile,
+    ParameterRow,
+    QueryPreview,
     RunOutcome,
     ScheduleRequest,
+    TemplateDraft,
     Weekday,
 )
 from reportmaker.features.gui.parameters import build_parameters, field_label
@@ -30,8 +34,11 @@ from reportmaker.features.gui.services import (
     format_size,
     import_uploaded_template,
     list_output_files,
+    load_template_draft,
     parse_time_of_day,
+    preview_query,
     run_report_with_delivery,
+    save_template_draft,
 )
 from reportmaker.features.report_generation.models import ParameterSchema, ParameterType
 from reportmaker.features.scheduling.exceptions import ScheduleNotFoundError
@@ -55,6 +62,10 @@ _TIME_FREQUENCIES = (
     Frequency.MONTHLY.value,
 )
 _TRUE_WORDS = ("true", "1", "yes", "on")
+_OUTPUT_CHOICES = {"pdf": "PDF", "html": "HTML page", "excel": "Excel"}
+_CHART_CHOICES = {"": "No chart", "bar": "Bar chart", "line": "Line chart"}
+_AGGREGATION_FUNCTIONS = ["sum", "mean", "count", "min", "max", "std"]
+_PARAMETER_TYPES = [kind.value for kind in ParameterType]
 
 _ACTION_SLOT = """
 <q-td :props="props" auto-width>
@@ -630,9 +641,13 @@ class _Dashboard:
     # ---------- Templates ----------
     def _templates_panel(self) -> None:
         ui.label(
-            "Reports are defined by Excel templates. "
-            "Download the blank one, fill it in, and upload it."
+            "Build a report with the editor, or fill in the Excel template "
+            "and upload it."
         ).classes("text-subtitle1")
+        new_button = ui.button(
+            "New template", icon="add", on_click=lambda: self._open_editor(None)
+        )
+        new_button.mark("new-template")
         self._template_list()
         with ui.card().classes("w-full"):
             ui.label("Add a template").classes("text-h6")
@@ -695,7 +710,8 @@ class _Dashboard:
             {"name": "actions", "label": "", "field": "name"},
         ]
         table = ui.table(columns=columns, rows=rows, row_key="name").classes("w-full")
-        buttons = _action_button("export", "download", "Download as Excel")
+        buttons = _action_button("edit", "edit", "Edit")
+        buttons += _action_button("export", "download", "Download as Excel")
         buttons += _action_button("delete", "delete", "Delete")
         table.add_slot("body-cell-actions", _ACTION_SLOT.format(buttons=buttons))
 
@@ -707,6 +723,14 @@ class _Dashboard:
 
         table.on("export", export)
         table.on(
+            "edit",
+            lambda e: (
+                self._open_editor(e.args.get("name", ""))
+                if e.args.get("name", "") in templates
+                else None
+            ),
+        )
+        table.on(
             "delete",
             lambda e: (
                 self._confirm_delete_template(e.args.get("name", ""))
@@ -714,6 +738,203 @@ class _Dashboard:
                 else None
             ),
         )
+
+    # ---------- Template editor ----------
+    def _open_editor(self, existing: Optional[str]) -> None:
+        """Open the create/edit dialog for a template (``None`` creates one)."""
+        base = None
+        draft = TemplateDraft()
+        if existing:
+            try:
+                draft, base = load_template_draft(self._manager, existing)
+            except GuiError as e:
+                ui.notify(str(e), type="negative", multi_line=True)
+                return
+
+        with ui.dialog().props("persistent") as dialog, ui.card().classes(
+            "w-[90vw] max-w-4xl"
+        ):
+            ui.label(f"Edit '{existing}'" if existing else "New template").classes(
+                "text-h6"
+            )
+            with ui.column().classes("w-full gap-2").style(
+                "max-height: 70vh; overflow-y: auto"
+            ):
+                self._editor_sections(draft, base)
+
+            def save() -> None:
+                try:
+                    stored = save_template_draft(self._manager, draft, existing, base)
+                except GuiError as e:
+                    ui.notify(str(e), type="negative", multi_line=True)
+                    return
+                ui.notify(f"Template '{stored}' saved.", type="positive")
+                dialog.close()
+                self._template_list.refresh()
+                self._refresh_template_choices()
+
+            with ui.row().classes("justify-end w-full"):
+                ui.button("Cancel", on_click=dialog.close).props("flat").mark(
+                    "editor-cancel"
+                )
+                ui.button("Save", icon="save", on_click=save).mark("editor-save")
+        dialog.on("hide", dialog.delete)
+        dialog.open()
+
+    def _editor_sections(self, draft: TemplateDraft, base: Optional[Any]) -> None:
+        with ui.expansion("1. About the report", value=True).classes("w-full"):
+            ui.input("Report name").bind_value(draft, "name").classes("w-full").mark(
+                "editor-name"
+            )
+            ui.input("Description (optional)").bind_value(draft, "description").classes(
+                "w-full"
+            )
+            ui.select(_OUTPUT_CHOICES, label="Output format").bind_value(
+                draft, "output"
+            ).classes("w-full")
+
+        with ui.expansion("2. Where the data comes from", value=True).classes("w-full"):
+            ui.input(
+                "Database URL", placeholder="sqlite:///sales.db"
+            ).bind_value(draft, "database_url").classes("w-full").mark("editor-url")
+            ui.textarea(
+                "SQL query",
+                placeholder="SELECT product, SUM(revenue) AS total FROM sales GROUP BY product",
+            ).bind_value(draft, "query").classes("w-full").props("autogrow").mark(
+                "editor-query"
+            )
+            ui.label(
+                "Use {{ name }} in the query for a value you fill in at run time "
+                "(declare it under Parameters)."
+            ).classes("text-caption text-grey")
+            preview_area = ui.column().classes("w-full")
+
+            async def test_query() -> None:
+                preview_area.clear()
+                try:
+                    # A copy: the form keeps changing while the query runs.
+                    preview = await run.io_bound(
+                        preview_query, draft.model_copy(deep=True), 20, base
+                    )
+                except GuiError as e:
+                    with preview_area:
+                        ui.label(str(e)).classes("text-negative").style(
+                            "white-space: pre-wrap"
+                        )
+                    return
+                with preview_area:
+                    self._show_preview(preview)
+
+            ui.button("Test query", icon="play_circle", on_click=test_query).props(
+                "outline"
+            ).mark("editor-test")
+
+        with ui.expansion("3. Chart (optional)", value=bool(draft.chart_kind)).classes(
+            "w-full"
+        ):
+            ui.select(_CHART_CHOICES, label="Chart type").bind_value(
+                draft, "chart_kind"
+            ).classes("w-full")
+            with ui.row().classes("w-full"):
+                ui.input("X column").bind_value(draft, "chart_x").mark("editor-chart-x")
+                ui.input("Y column").bind_value(draft, "chart_y")
+            ui.input("Chart title").bind_value(draft, "chart_title").classes("w-full")
+            with ui.row().classes("w-full"):
+                ui.input("X axis label").bind_value(draft, "chart_x_label")
+                ui.input("Y axis label").bind_value(draft, "chart_y_label")
+
+        has_grouping = bool(
+            draft.group_by or draft.aggregations or draft.pivot_index
+        )
+        with ui.expansion("4. Grouping and totals (optional)", value=has_grouping).classes(
+            "w-full"
+        ):
+            ui.input("Group by (comma-separated columns)").bind_value(
+                draft, "group_by"
+            ).classes("w-full")
+
+            @ui.refreshable
+            def aggregation_rows() -> None:
+                for row in draft.aggregations:
+                    with ui.row().classes("w-full items-center"):
+                        ui.input("Column").bind_value(row, "column")
+                        ui.select(_AGGREGATION_FUNCTIONS, label="Calculate").bind_value(
+                            row, "function"
+                        )
+                        ui.button(
+                            icon="delete",
+                            on_click=lambda r=row: remove_aggregation(r),
+                        ).props("flat round dense")
+
+            def add_aggregation() -> None:
+                draft.aggregations.append(AggregationRow())
+                aggregation_rows.refresh()
+
+            def remove_aggregation(row: AggregationRow) -> None:
+                draft.aggregations.remove(row)
+                aggregation_rows.refresh()
+
+            aggregation_rows()
+            ui.button("Add a calculation", icon="add", on_click=add_aggregation).props(
+                "flat"
+            )
+            ui.label("Pivot (optional, fill in all three)").classes("text-subtitle2")
+            with ui.row().classes("w-full"):
+                ui.input("Index column").bind_value(draft, "pivot_index")
+                ui.input("Columns").bind_value(draft, "pivot_columns")
+                ui.input("Values").bind_value(draft, "pivot_values")
+
+        with ui.expansion(
+            "5. Values asked at run time (optional)", value=bool(draft.parameters)
+        ).classes("w-full"):
+
+            @ui.refreshable
+            def parameter_rows() -> None:
+                for row in draft.parameters:
+                    with ui.row().classes("w-full items-center"):
+                        ui.input("Name").bind_value(row, "name").mark("editor-param-name")
+                        ui.select(_PARAMETER_TYPES, label="Type").bind_value(row, "type")
+                        ui.checkbox("Required").bind_value(row, "required")
+                        ui.input("Default").bind_value(row, "default")
+                        ui.input("Description").bind_value(row, "description")
+                        ui.button(
+                            icon="delete", on_click=lambda r=row: remove_parameter(r)
+                        ).props("flat round dense")
+
+            def add_parameter() -> None:
+                draft.parameters.append(ParameterRow())
+                parameter_rows.refresh()
+
+            def remove_parameter(row: ParameterRow) -> None:
+                draft.parameters.remove(row)
+                parameter_rows.refresh()
+
+            parameter_rows()
+            ui.button("Add a value", icon="add", on_click=add_parameter).props(
+                "flat"
+            ).mark("editor-add-param")
+
+    @staticmethod
+    def _show_preview(preview: QueryPreview) -> None:
+        if not preview.rows:
+            ui.label("The query ran but returned no rows.").classes("text-grey")
+            return
+        # Positional keys: result columns may repeat or hold odd characters.
+        columns = [
+            {"name": f"c{i}", "label": label, "field": f"c{i}", "align": "left"}
+            for i, label in enumerate(preview.columns)
+        ]
+        rows = [
+            {"_row": n, **{f"c{i}": value for i, value in enumerate(values)}}
+            for n, values in enumerate(preview.rows)
+        ]
+        ui.table(columns=columns, rows=rows, row_key="_row").classes("w-full").props(
+            "dense"
+        )
+        note = f"First {len(preview.rows)} rows"
+        if preview.truncated:
+            note += " (there are more)"
+        ui.label(note).classes("text-caption text-grey")
 
     def _confirm_delete_template(self, name: str) -> None:
         def delete() -> None:

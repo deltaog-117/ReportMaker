@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -115,3 +115,55 @@ class ScheduleRequest(BaseModel):
         if self.frequency == Frequency.CUSTOM and not (self.custom_cron or "").strip():
             raise ValueError("Enter a cron expression, or pick a simpler frequency")
         return self
+
+
+class AggregationRow(BaseModel):
+    """One 'column -> function' line of the grouping section."""
+
+    column: str = ""
+    function: str = "sum"
+
+
+class ParameterRow(BaseModel):
+    """One report parameter as typed into the editor (everything is text)."""
+
+    name: str = ""
+    type: str = "string"
+    required: bool = True
+    default: str = ""
+    description: str = ""
+
+
+class TemplateDraft(BaseModel):
+    """A report definition as the editor form holds it.
+
+    Plain strings throughout, so every widget can bind to a field directly;
+    ``build_report_config`` is the single place they become typed values.
+    An empty ``chart_kind`` means "no chart".
+    """
+
+    name: str = ""
+    description: str = ""
+    output: str = "pdf"
+    database_url: str = ""
+    query: str = ""
+    chart_kind: str = ""
+    chart_x: str = ""
+    chart_y: str = ""
+    chart_title: str = ""
+    chart_x_label: str = ""
+    chart_y_label: str = ""
+    group_by: str = ""
+    aggregations: List[AggregationRow] = Field(default_factory=list)
+    pivot_index: str = ""
+    pivot_columns: str = ""
+    pivot_values: str = ""
+    parameters: List[ParameterRow] = Field(default_factory=list)
+
+
+class QueryPreview(BaseModel):
+    """The first rows a query returned, rendered as text for display."""
+
+    columns: List[str]
+    rows: List[List[str]]
+    truncated: bool = False

@@ -1,5 +1,6 @@
 """Integration tests: drive the real GUI pages with NiceGUI's simulated browser."""
 
+import asyncio
 import sqlite3
 from pathlib import Path
 
@@ -69,6 +70,18 @@ def table_row_names(user: User) -> list:
     return [
         row["name"] for table in user.find(kind=ui.table).elements for row in table.rows
     ]
+
+
+async def eventually(check, timeout: float = 3.0) -> None:
+    """Poll until check() is truthy; background work finishes after the click."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not check():
+        assert asyncio.get_running_loop().time() < deadline, "condition never became true"
+        await asyncio.sleep(0.05)
+
+
+def all_table_rows(user: User) -> list:
+    return [row for table in user.find(kind=ui.table).elements for row in table.rows]
 
 
 async def test_home_page_shows_every_tab(user: User, gui_settings: GuiSettings) -> None:
@@ -186,3 +199,90 @@ async def test_templates_tab_lists_stored_templates(
     await user.open("/")
     rows = [row for table in user.find(kind=ui.table).elements for row in table.rows]
     assert {"name": "sales", "description": "Sales by product"} in rows
+
+
+async def test_new_template_from_the_editor_is_stored_and_listed(
+    user: User, gui_settings: GuiSettings
+) -> None:
+    register_pages(gui_settings)
+    await user.open("/")
+    user.find(marker="new-template").click()
+    user.find(marker="editor-name").type("Fresh Report")
+    user.find(marker="editor-url").type("sqlite:///fresh.db")
+    user.find(marker="editor-query").type("SELECT 1 AS n")
+    user.find(marker="editor-save").click()
+
+    assert user.notify.contains("Template 'fresh_report' saved.")
+    stored = yaml.safe_load((gui_settings.templates_dir / "fresh_report.yaml").read_text())
+    assert stored["name"] == "Fresh Report"
+    await eventually(lambda: "fresh_report" in table_row_names(user))
+
+
+async def test_saving_an_incomplete_template_explains_what_is_missing(
+    user: User, gui_settings: GuiSettings
+) -> None:
+    register_pages(gui_settings)
+    await user.open("/")
+    user.find(marker="new-template").click()
+    user.find(marker="editor-save").click()
+
+    assert user.notify.contains("Give the report a name")
+    assert not (gui_settings.templates_dir / ".yaml").exists()
+
+
+async def test_test_query_shows_the_first_rows(
+    user: User, gui_settings: GuiSettings, tmp_path: Path
+) -> None:
+    register_pages(gui_settings)
+    await user.open("/")
+    user.find(marker="new-template").click()
+    user.find(marker="editor-url").type(f"sqlite:///{tmp_path / 'sales.db'}")
+    user.find(marker="editor-query").type("SELECT product FROM sales ORDER BY product")
+    user.find(marker="editor-test").click()
+
+    await eventually(
+        lambda: {"c0": "Gadget"} in [
+            {"c0": row["c0"]} for row in all_table_rows(user) if "c0" in row
+        ]
+    )
+
+
+async def test_test_query_explains_a_failure(
+    user: User, gui_settings: GuiSettings, tmp_path: Path
+) -> None:
+    register_pages(gui_settings)
+    await user.open("/")
+    user.find(marker="new-template").click()
+    user.find(marker="editor-url").type(f"sqlite:///{tmp_path / 'sales.db'}")
+    user.find(marker="editor-query").type("SELECT * FROM nowhere")
+    user.find(marker="editor-test").click()
+
+    await user.should_see("The query failed")
+
+
+def press_row_button(user: User, event: str, name: str) -> None:
+    """Fire a table's row-button event the way the browser would."""
+    table = user.find(kind=ui.table).elements.pop()
+    for listener_id, listener in table._event_listeners.items():
+        if listener.type == event:
+            table._handle_event({"listener_id": listener_id, "args": {"name": name}})
+
+
+async def test_editing_a_template_prefills_the_form_and_saves_in_place(
+    user: User, gui_settings: GuiSettings
+) -> None:
+    register_pages(gui_settings)
+    await user.open("/")
+    press_row_button(user, "edit", "sales")
+    await user.should_see("Edit 'sales'")
+    name = user.find(marker="editor-name").elements.pop()
+    assert name.value == "sales"
+
+    name.set_value("Sales Renamed")
+    user.find(marker="editor-save").click()
+
+    assert user.notify.contains("Template 'sales' saved.")
+    stored = yaml.safe_load((gui_settings.templates_dir / "sales.yaml").read_text())
+    assert stored["name"] == "Sales Renamed"
+    assert stored["parameters"][0]["name"] == "product"
+    assert [p.stem for p in gui_settings.templates_dir.glob("*.yaml")] == ["sales"]

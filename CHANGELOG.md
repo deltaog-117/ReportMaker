@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Visual template editor in the GUI's Templates tab: "New template" and a per-row "Edit" action open a dialog covering every report setting (name, description, output format, database URL, SQL, chart, group-by, aggregations, pivot, and run-time parameters), with every problem reported at once on save. A "Test query" button runs the SQL with the parameters' default values and shows the first 20 rows; the connection is never committed, so a mistyped `UPDATE`/`DELETE` is rolled back.
+- `TemplateManager.save_config()`: stores a validated `ReportConfig` as a YAML template, refusing to overwrite unless forced and carrying over top-level sections the model does not know (such as `delivery:`) from the file it replaces.
 - The GUI's scheduler now runs inside the `reportmaker gui` process itself (an APScheduler `BackgroundScheduler`, started and stopped with the app), so schedules fire without a separate `reportmaker schedule start`. A schedule added, removed, or toggled from the Schedules tab takes effect on that same running scheduler immediately, instead of only after a restart.
 - Enable/disable toggle per schedule in the Schedules tab, backed by `SchedulerService.set_enabled()`.
 - A bounded run-history log (`run_history.yaml`, `RunHistoryStore`, capped at 200 records) and a "view run history" dialog per schedule, showing each run's outcome, duration, and output path or error.

@@ -17,6 +17,8 @@ Items are organized by priority, not by timeline.
 - ✅ Delivery Options – `delivery` feature with a channel abstraction (`local`, `email`); reports can be copied to a directory or sent as an SMTP email attachment via an optional `delivery:` section in the report YAML, triggered automatically after `run` and after each successful scheduled run
 - ✅ GUI Interface – embedded scheduler – `reportmaker gui` now runs a `BackgroundScheduler` inside its own process, so schedules fire without a separate `reportmaker schedule start`; a schedule added, removed, or toggled from the GUI takes effect on that same running scheduler immediately. The Schedules tab gained an enable/disable toggle per schedule and a "view run history" dialog backed by a new bounded run-history log
 
+- ✅ GUI Interface – visual template editor – the Templates tab has a "New template" button and a per-row "Edit" action opening a form dialog for every report setting (name, output format, database URL, SQL, chart, grouping/aggregations/pivot, run-time parameters). A "Test query" button runs the SQL with the parameter defaults and shows the first 20 rows, rolled back so it can never write. Edits save in place and keep sections the form has no field for (e.g. `delivery:`)
+
 ---
 
 ## 🔥 High Priority (Critical)
@@ -60,9 +62,6 @@ These features make the tool more useful and professional.
 ## 🟢 Low Priority (Nice‑to‑Have)
 
 Enhancements that add polish but are not required for the first release.
-
-- **GUI Interface – follow-ups** – The MVP shipped, and the in-process scheduler, run logs, and enable/disable followed (see Completed). Remaining:
-  - Create and edit report definitions visually (today: fill in the Excel template and upload it).
 
 - **Dashboard Integration** – Push report data to Power BI, Tableau, or other dashboards via APIs.
 

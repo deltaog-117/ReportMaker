@@ -22,6 +22,7 @@
 | 2026-09-15 | Delivery Options | Feature-First Channel Abstraction, Wired via `main.py` | ✅ Confirmed |
 | 2026-09-19 | GUI Interface | NiceGUI Python-Only Web UI (`reportmaker gui`) | ✅ Confirmed |
 | 2026-09-27 | Embedded Scheduler in the GUI | `BackgroundScheduler` Singleton on GUI Lifecycle Hooks | ✅ Confirmed |
+| 2026-10-20 | Visual Template Editor | Form Dialog over a String-Typed Draft Model | ✅ Confirmed |
 
 ---
 
@@ -1182,3 +1183,91 @@ The GUI Interface decision (above) shipped with two documented gaps: schedules c
 | Date | Update | Author |
 |------|--------|--------|
 | 2026-09-27 | Initial decision and implementation | deltaog-117 |
+
+### Visual Template Editor
+
+**Date:** 2026-10-20
+**Status:** ✅ Confirmed
+
+---
+
+#### Context / Background
+
+After the GUI shipped, the only way to define a report was to download the Excel template, fill it in, and upload it. The ROADMAP's remaining "GUI Interface – follow-ups" item was to create and edit report definitions visually. The editor had to cover every `ReportConfig` section, work for both creating and editing, and let a non-coder check their SQL before saving.
+
+---
+
+#### Options Considered
+
+**Option A: One form dialog with a collapsible section per config area**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Matches the existing dialogs and Schedules form; works for create and edit alike; all sections visible and editable at once |
+| **Disadvantages** | Many fields; aggregations and parameters need dynamic row lists |
+| **Implementation Difficulty** | Medium |
+
+**Option B: Step-by-step wizard (`ui.stepper`)**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Friendliest for first-time users; per-step validation |
+| **Disadvantages** | Most UI code; awkward for editing an existing template |
+| **Implementation Difficulty** | High |
+
+**Option C: Raw YAML editor with live validation**
+
+| Aspect | Assessment |
+|--------|------------|
+| **Advantages** | Smallest change; full flexibility |
+| **Disadvantages** | Not visual, and not friendly to the non-technical users the GUI exists for |
+| **Implementation Difficulty** | Small |
+
+---
+
+#### Decision & Rationale
+
+**Chosen Option:** A — form dialog, plus a "Test query" button
+
+> The form gives create and edit one code path and reuses the same validation the Excel importer relies on (`ReportConfig` plus the semantic pre-flight checks), so the three ways of defining a report cannot drift apart.
+>
+> **Design choices made along the way:**
+> - **A string-typed `TemplateDraft` model holds the form state.** Every widget binds straight to a field; `build_report_config()` is the single place text becomes typed values and where all problems are collected and reported at once. An empty `chart_kind` means "no chart". All of this lives in `gui/services.py` with no NiceGUI import, so it is unit- and property-tested without a browser.
+> - **`TemplateManager.save_config()` is the new storage entry point.** It takes an optional pinned `name`, so renaming the report inside the form while editing does not orphan the file or create a duplicate.
+> - **Editing preserves what the form cannot show.** `data_source.parameters` and `schedule` are carried over from the config being edited (`base`), and unknown top-level YAML keys, notably `delivery:`, are re-read from the file being replaced. Without this, one edit would silently turn off a report's delivery.
+> - **"Test query" never writes.** It executes the SQL on a connection that is closed without committing, so even a mistyped `DELETE` is rolled back, and it reads only the first 20 rows. Parameters take their default values; a required one with no default is reported rather than guessed.
+>
+> **Trade-offs accepted:**
+> - The query preview has no timeout, so a slow query holds a worker thread until it finishes; reports have the same property today.
+> - A report that is open in the Run tab keeps showing its old parameter form after being edited, until another report is chosen and the first is re-selected.
+> - The pivot's index, columns and values are plain text fields; they are not validated against the query's real columns.
+
+#### Implementation Notes
+
+**Files modified:**
+- `src/reportmaker/features/template_management/services.py` — `TemplateManager.save_config()`.
+- `src/reportmaker/features/gui/models.py` — `TemplateDraft`, `AggregationRow`, `ParameterRow`, `QueryPreview`.
+- `src/reportmaker/features/gui/services.py` — `build_report_config()`, `draft_from_config()`, `load_template_draft()`, `save_template_draft()`, `preview_query()`.
+- `src/reportmaker/features/gui/pages.py` — "New template" button, per-row "Edit" action, editor dialog and query-preview table.
+
+**Tests added:** `tests/unit/features/gui/test_template_editor.py` (including a property test that draft → config → draft → config is stable and one that a preview never exceeds its row limit), `TestSaveConfig` in the previously empty `tests/unit/features/template_management/test_services.py`, and five simulated-browser tests in `tests/integration/features/test_gui.py`.
+
+**Problems found while building it:**
+- `save_config(name="")` first fell back to the report's name because of an `or` instead of an `is None` check; caught by its own test.
+- Table cell text is rendered client-side, so NiceGUI's `should_see` cannot find it; the integration tests poll the table's rows instead.
+
+**Deployment note (rollback):** the editor is purely additive UI plus one new storage method; nothing existing changed behaviour. To roll back, remove the "New template" button and the "edit" action. Stored templates stay valid, as they are ordinary YAML.
+
+#### References
+
+- Related decisions: GUI Interface, Template Management (Excel ↔ YAML)
+
+---
+
+#### Review / Update Log
+
+| Date | Update | Author |
+|------|--------|--------|
+| 2026-10-20 | Initial decision and implementation | deltaog-117 |
+
+---
