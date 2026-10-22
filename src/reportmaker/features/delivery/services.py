@@ -13,7 +13,13 @@ from reportmaker.shared.config import get_env, load_yaml_config
 from reportmaker.shared.file_utils import ensure_directory
 from reportmaker.shared.logging import get_logger
 from reportmaker.features.delivery.exceptions import DeliveryError, EmailDeliveryError
-from reportmaker.features.delivery.models import DeliveryChannel, DeliveryConfig, DeliveryResult, EmailDeliveryConfig
+from reportmaker.features.delivery.models import (
+    DeliveryChannel,
+    DeliveryConfig,
+    DeliveryResult,
+    EmailBodyFormat,
+    EmailDeliveryConfig,
+)
 
 logger = get_logger(__name__)
 
@@ -66,6 +72,12 @@ class EmailDeliveryHandler(DeliveryHandler):
             message["Cc"] = ", ".join(email_cfg.cc)
         message["Subject"] = email_cfg.subject or f"Report: {path.stem}"
         message.set_content(email_cfg.body or "Your report is attached.")
+        if email_cfg.body_format == EmailBodyFormat.HTML:
+            if path.suffix.lower() != ".html":
+                raise EmailDeliveryError(
+                    f"body_format 'html' needs an HTML report, but the report is {path.name}"
+                )
+            message.add_alternative(path.read_text(encoding="utf-8"), subtype="html")
 
         maintype, subtype = self._guess_content_type(path)
         message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)

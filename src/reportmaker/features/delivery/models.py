@@ -14,12 +14,21 @@ class DeliveryChannel(str, Enum):
     EMAIL = "email"
 
 
+class EmailBodyFormat(str, Enum):
+    TEXT = "text"
+    HTML = "html"
+
+
 class EmailDeliveryConfig(BaseModel):
     """SMTP email delivery settings for a report."""
     to: List[str] = Field(..., description="Recipient email addresses")
     cc: Optional[List[str]] = Field(None, description="CC email addresses")
     subject: Optional[str] = Field(None, description="Email subject (defaults to the report filename)")
     body: Optional[str] = Field(None, description="Email body text (defaults to a generic message)")
+    body_format: EmailBodyFormat = Field(
+        EmailBodyFormat.TEXT,
+        description="'html' inlines an HTML report as the message body (the report is still attached)",
+    )
 
     @model_validator(mode="after")
     def validate_addresses(self):

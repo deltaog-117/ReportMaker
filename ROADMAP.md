@@ -18,28 +18,8 @@ Items are organized by priority, not by timeline.
 - ✅ GUI Interface – embedded scheduler – `reportmaker gui` now runs a `BackgroundScheduler` inside its own process, so schedules fire without a separate `reportmaker schedule start`; a schedule added, removed, or toggled from the GUI takes effect on that same running scheduler immediately. The Schedules tab gained an enable/disable toggle per schedule and a "view run history" dialog backed by a new bounded run-history log
 
 - ✅ GUI Interface – visual template editor – the Templates tab has a "New template" button and a per-row "Edit" action opening a form dialog for every report setting (name, output format, database URL, SQL, chart, grouping/aggregations/pivot, run-time parameters). A "Test query" button runs the SQL with the parameter defaults and shows the first 20 rows, rolled back so it can never write. Edits save in place and keep sections the form has no field for (e.g. `delivery:`)
-
----
-
-## 🔥 High Priority (Critical)
-
-These features are **essential** for a minimum viable product that can generate a usable sales report.
-
-- **Core Report Generation** – Implement the `report_generation` feature:
-  - Define Pydantic models for `ReportRequest`, `ReportResult`, `DataSourceConfig`, and `ExportFormat` (PDF, HTML, Excel).
-  - Build a service that executes a SQL query (against a configurable database), processes the result with pandas, and exports to PDF with a table and chart.
-  - Provide a CLI command `reportmaker run --config config.yaml` to trigger a report.
-  - Add structured logging and basic performance metrics (query duration, render time).
-
-- **Configuration-Driven Report Definition** – Allow non‑coders to define reports via YAML/JSON:
-  - Include query, output format, chart type, aggregation rules, and scheduling parameters.
-  - Support dynamic parameters (e.g., `{{ yesterday }}`) for date‑based reports.
-
-- **PDF Export with Table and Chart** – Implement the first output format:
-  - Use `reportlab` to generate a PDF with a properly formatted table and a chart (bar or line) below it.
-  - Include a title, date stamp, and totals row.
-
-- **Basic Data Source Abstraction** – Create a simple interface in `data_sources` to connect to SQLite and PostgreSQL (or any SQLAlchemy‑supported DB). This allows the report generator to run queries without knowing the underlying DB type.
+- ✅ Core report generation, config-driven YAML reports with dynamic parameters, PDF export (table + chart), SQLAlchemy data-source abstraction, scheduling engine, HTML and multi-sheet Excel export, template management, and runtime-parameterised reports
+- ✅ HTML email body – `body_format: html` in the email delivery config inlines an HTML report as the message body while still attaching it
 
 ---
 
@@ -47,15 +27,8 @@ These features are **essential** for a minimum viable product that can generate 
 
 These features make the tool more useful and professional.
 
-- **Scheduling Engine** – Integrate with `cron` (or `schedule` library) to run reports automatically:
-  - Support intervals (daily, weekly, monthly) and time‑of‑day.
-  - Store execution logs and notify on failure.
-
-- **Multi‑Format Export** – Add HTML and Excel export:
-  - HTML for embedding in email bodies or web previews.
-  - Excel with multiple sheets (raw data + summary).
-
-- **Template Management** – Store report templates (queries, formatting, schedule) in a database or file system, with versioning. This allows users to manage multiple reports and reuse components.
+- **Template Versioning** – Templates are stored and editable already (Excel/YAML, GUI editor); add version history so users can compare and roll back edits.
+- **Multi-format runs** – Let one report produce several formats (`output: [pdf, html, excel]`) in a single run and deliver them together.
 
 ---
 
@@ -68,8 +41,6 @@ Enhancements that add polish but are not required for the first release.
 - **Alerting** – Send alerts if a metric (e.g., revenue) drops below a threshold.
 
 - **More Chart Types** – Support for pie, scatter, and area charts.
-
-- **Parameterised Reports** – Allow user‑provided parameters (e.g., date range, product category) at runtime.
 
 - **Caching** – Cache query results for frequently run reports to reduce database load.
 

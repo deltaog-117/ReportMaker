@@ -23,6 +23,7 @@
 | 2026-09-19 | GUI Interface | NiceGUI Python-Only Web UI (`reportmaker gui`) | ✅ Confirmed |
 | 2026-09-27 | Embedded Scheduler in the GUI | `BackgroundScheduler` Singleton on GUI Lifecycle Hooks | ✅ Confirmed |
 | 2026-10-20 | Visual Template Editor | Form Dialog over a String-Typed Draft Model | ✅ Confirmed |
+| 2026-10-22 | HTML Email Body | Opt-in `body_format` on Email Delivery | ✅ Confirmed |
 
 ---
 
@@ -1269,5 +1270,29 @@ After the GUI shipped, the only way to define a report was to download the Excel
 | Date | Update | Author |
 |------|--------|--------|
 | 2026-10-20 | Initial decision and implementation | deltaog-117 |
+
+---
+
+### 2026-10-22 — HTML Email Body
+
+**Context:** The roadmap listed HTML export "for embedding in email bodies". HTML and multi-sheet Excel rendering already existed, but email delivery only attached the file.
+
+**Options considered:** (1) `body_format` option on email delivery; (2) list-valued `output` rendering several formats per run; (3) do 1 now and 2 later as its own feature.
+
+**Decision:** Option 3. Added `body_format: text | html` to `EmailDeliveryConfig`. With `html`, the report file becomes the HTML alternative of the message and is still attached. Default is `text`, so existing configs behave as before.
+
+**Why:** Smallest change that delivers the stated use case, touching only `delivery`. A list-valued `output` changes the YAML schema, pipeline, GUI form and run history, so it deserves its own cycle.
+
+**Failure behaviour:** `body_format: html` with a non-HTML report returns a failed `DeliveryResult` with a clear message instead of sending a wrong body.
+
+**Files:** `delivery/models.py` (`EmailBodyFormat`), `delivery/services.py` (`_build_message`). **Tests:** `tests/unit/features/delivery/test_email_body_format.py`.
+
+**Deployment note (rollback):** additive and opt-in; remove the field to roll back.
+
+#### Review / Update Log
+
+| Date | Update | Author |
+|------|--------|--------|
+| 2026-10-22 | Initial decision and implementation | deltaog-117 |
 
 ---

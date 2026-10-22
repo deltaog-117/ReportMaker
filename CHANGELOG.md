@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Email delivery option `body_format: html`: inlines an HTML report as the message body (with a plain-text fallback), while still attaching the file. The default stays `text`; a non-HTML report with `body_format: html` is reported as a failed delivery.
 - Visual template editor in the GUI's Templates tab: "New template" and a per-row "Edit" action open a dialog covering every report setting (name, description, output format, database URL, SQL, chart, group-by, aggregations, pivot, and run-time parameters), with every problem reported at once on save. A "Test query" button runs the SQL with the parameters' default values and shows the first 20 rows; the connection is never committed, so a mistyped `UPDATE`/`DELETE` is rolled back.
 - `TemplateManager.save_config()`: stores a validated `ReportConfig` as a YAML template, refusing to overwrite unless forced and carrying over top-level sections the model does not know (such as `delivery:`) from the file it replaces.
 - The GUI's scheduler now runs inside the `reportmaker gui` process itself (an APScheduler `BackgroundScheduler`, started and stopped with the app), so schedules fire without a separate `reportmaker schedule start`. A schedule added, removed, or toggled from the Schedules tab takes effect on that same running scheduler immediately, instead of only after a restart.
