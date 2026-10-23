@@ -280,6 +280,55 @@ def template_delete(name, templates_dir):
         click.echo(f"❌ {e}", err=True); sys.exit(1)
 
 
+@template.command("history")
+@click.argument("name")
+@click.option("--templates-dir", default="./templates")
+def template_history(name, templates_dir):
+    """List the earlier versions of a template, newest first."""
+    setup_logging(level="INFO", json_format=False)
+    manager = TemplateManager(templates_dir)
+    versions = manager.list_versions(name)
+    if not versions:
+        click.echo(f"No earlier versions of '{name}'.")
+        return
+    from tabulate import tabulate
+    table = [[v.version_id, v.created_at.strftime("%Y-%m-%d %H:%M:%S"), v.source.value, v.size_bytes]
+             for v in versions]
+    click.echo(tabulate(table, headers=["Version", "Saved (UTC)", "Replaced by", "Bytes"], tablefmt="grid"))
+
+
+@template.command("diff")
+@click.argument("name")
+@click.argument("version_id")
+@click.option("--against", help="Another version id to compare with (defaults to the current template)")
+@click.option("--templates-dir", default="./templates")
+def template_diff(name, version_id, against, templates_dir):
+    """Show what changed between a version and the current template."""
+    setup_logging(level="INFO", json_format=False)
+    manager = TemplateManager(templates_dir)
+    try:
+        diff = manager.diff_versions(name, version_id, against)
+    except TemplateNotFoundError as e:
+        click.echo(f"❌ {e}", err=True); sys.exit(1)
+    click.echo(diff if diff else "No differences.")
+
+
+@template.command("rollback")
+@click.argument("name")
+@click.argument("version_id")
+@click.option("--templates-dir", default="./templates")
+def template_rollback(name, version_id, templates_dir):
+    """Restore a template to an earlier version (also recreates a deleted one)."""
+    setup_logging(level="INFO", json_format=False)
+    manager = TemplateManager(templates_dir)
+    try:
+        path = manager.rollback(name, version_id)
+    except TemplateNotFoundError as e:
+        click.echo(f"❌ {e}", err=True); sys.exit(1)
+    click.echo(f"✅ Template '{name}' restored from {version_id}: {path}")
+    click.echo("   The content it replaced was kept in the history.")
+
+
 # ---------- GUI command ----------
 @cli.command("gui")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Address to listen on. Keep the default so only this computer can reach the app")

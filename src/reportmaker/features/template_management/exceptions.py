@@ -8,6 +8,10 @@ class TemplateNotFoundError(TemplateError):
     """Raised when a template does not exist."""
     pass
 
+class TemplateVersionNotFoundError(TemplateNotFoundError):
+    """Raised when a template has no such version in its history."""
+    pass
+
 class TemplateAlreadyExistsError(TemplateError):
     """Raised when attempting to import a template with an existing name."""
     pass

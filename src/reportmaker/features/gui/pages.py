@@ -710,6 +710,7 @@ class _Dashboard:
         table = ui.table(columns=columns, rows=rows, row_key="name").classes("w-full")
         buttons = _action_button("edit", "edit", "Edit")
         buttons += _action_button("export", "download", "Download as Excel")
+        buttons += _action_button("versions", "history", "Version history")
         buttons += _action_button("delete", "delete", "Delete")
         table.add_slot("body-cell-actions", _ACTION_SLOT.format(buttons=buttons))
 
@@ -729,6 +730,14 @@ class _Dashboard:
             ),
         )
         table.on(
+            "versions",
+            lambda e: (
+                self._open_version_history(e.args.get("name", ""))
+                if e.args.get("name", "") in templates
+                else None
+            ),
+        )
+        table.on(
             "delete",
             lambda e: (
                 self._confirm_delete_template(e.args.get("name", ""))
@@ -736,6 +745,83 @@ class _Dashboard:
                 else None
             ),
         )
+
+    def _open_version_history(self, name: str) -> None:
+        """Show a template's earlier versions, with compare and restore."""
+        versions = self._manager.list_versions(name)
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-3xl"):
+            ui.label(f"Version history: {name}").classes("text-h6")
+            if not versions:
+                ui.label("No earlier versions yet. One is kept each time the template is changed.").classes("text-grey")
+                ui.button("Close", on_click=dialog.close).props("flat")
+                dialog.on("hide", dialog.delete)
+                dialog.open()
+                return
+            known = {v.version_id for v in versions}
+            rows = [
+                {
+                    "version_id": v.version_id,
+                    "saved": v.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "replaced_by": v.source.value,
+                }
+                for v in versions
+            ]
+            columns = [
+                {"name": "saved", "label": "Saved", "field": "saved", "align": "left"},
+                {
+                    "name": "replaced_by",
+                    "label": "Replaced by",
+                    "field": "replaced_by",
+                    "align": "left",
+                },
+                {"name": "actions", "label": "", "field": "version_id"},
+            ]
+            table = ui.table(columns=columns, rows=rows, row_key="version_id").classes(
+                "w-full"
+            )
+            buttons = _action_button("compare", "difference", "Compare with current")
+            buttons += _action_button("restore", "restore", "Restore this version")
+            table.add_slot("body-cell-actions", _ACTION_SLOT.format(buttons=buttons))
+            diff_area = ui.column().classes("w-full")
+
+            def compare(e: events.GenericEventArguments) -> None:
+                version_id = e.args.get("version_id", "")
+                if version_id not in known:
+                    return
+                diff_area.clear()
+                with diff_area:
+                    try:
+                        diff = self._manager.diff_versions(name, version_id)
+                    except TemplateNotFoundError as err:
+                        ui.notify(str(err), type="warning")
+                        return
+                    if diff:
+                        ui.code(diff).classes("w-full")
+                    else:
+                        ui.label("Identical to the current template.").classes("text-grey")
+
+            def restore(e: events.GenericEventArguments) -> None:
+                version_id = e.args.get("version_id", "")
+                if version_id not in known:
+                    return
+                try:
+                    self._manager.rollback(name, version_id)
+                except TemplateNotFoundError as err:
+                    ui.notify(str(err), type="warning")
+                    return
+                ui.notify(
+                    f"Template '{name}' restored. The content it replaced is kept in the history.",
+                    type="positive",
+                )
+                dialog.close()
+                self._template_list.refresh()
+                self._refresh_template_choices()
+
+            table.on("compare", compare)
+            table.on("restore", restore)
+            ui.button("Close", on_click=dialog.close).props("flat")
+        dialog.on("hide", dialog.delete)
+        dialog.open()
 
     # ---------- Template editor ----------
     def _open_editor(self, existing: Optional[str]) -> None:
@@ -947,7 +1033,10 @@ class _Dashboard:
             self._refresh_template_choices()
 
         with ui.dialog() as dialog, ui.card():
-            ui.label(f"Delete the template '{name}'? This cannot be undone.")
+            ui.label(
+                f"Delete the template '{name}'? Its version history is kept, so "
+                "it can be restored with 'reportmaker template rollback'."
+            )
             with ui.row():
                 ui.button("Cancel", on_click=dialog.close).props("flat")
                 ui.button("Delete", on_click=delete, color="negative")

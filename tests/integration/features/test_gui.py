@@ -14,6 +14,7 @@ from nicegui.testing import User  # noqa: E402
 
 from reportmaker.features.gui.models import GuiSettings  # noqa: E402
 from reportmaker.features.gui.pages import register_pages  # noqa: E402
+from reportmaker.features.template_management.services import TemplateManager  # noqa: E402
 
 
 def make_sales_db(path: Path) -> None:
@@ -286,3 +287,39 @@ async def test_editing_a_template_prefills_the_form_and_saves_in_place(
     assert stored["name"] == "Sales Renamed"
     assert stored["parameters"][0]["name"] == "product"
     assert [p.stem for p in gui_settings.templates_dir.glob("*.yaml")] == ["sales"]
+
+
+def press_dialog_button(user: User, event: str, version_id: str) -> None:
+    """Fire a row button of the version-history table (the one that has it)."""
+    for table in user.find(kind=ui.table).elements:
+        for listener_id, listener in table._event_listeners.items():
+            if listener.type == event:
+                table._handle_event(
+                    {"listener_id": listener_id, "args": {"version_id": version_id}}
+                )
+
+
+async def test_version_history_dialog_compares_and_restores(
+    user: User, gui_settings: GuiSettings
+) -> None:
+    register_pages(gui_settings)
+    await user.open("/")
+    path = gui_settings.templates_dir / "sales.yaml"
+    original = path.read_bytes()
+    press_row_button(user, "edit", "sales")
+    await user.should_see("Edit 'sales'")
+    user.find(marker="editor-name").elements.pop().set_value("Sales Renamed")
+    user.find(marker="editor-save").click()
+    assert user.notify.contains("Template 'sales' saved.")
+
+    manager = TemplateManager(str(gui_settings.templates_dir))
+    (version,) = manager.list_versions("sales")
+    press_row_button(user, "versions", "sales")
+    await user.should_see("Version history: sales")
+
+    press_dialog_button(user, "compare", version.version_id)
+    await user.should_see("Sales Renamed")
+
+    press_dialog_button(user, "restore", version.version_id)
+    assert user.notify.contains("Template 'sales' restored.")
+    assert path.read_bytes() == original

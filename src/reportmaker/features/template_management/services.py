@@ -1,5 +1,6 @@
 """Template management: import/export Excel templates ↔ YAML configs."""
 
+import difflib
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,7 +27,16 @@ from reportmaker.features.template_management.exceptions import (
     TemplateNotFoundError,
     TemplateValidationError,
 )
-from reportmaker.features.template_management.models import TemplateInfo, TemplateImportResult
+from reportmaker.features.template_management.models import (
+    TemplateImportResult,
+    TemplateInfo,
+    TemplateVersion,
+    VersionSource,
+)
+from reportmaker.features.template_management.versioning import (
+    DEFAULT_MAX_VERSIONS,
+    VersionStore,
+)
 
 logger = get_logger(__name__)
 
@@ -34,9 +44,13 @@ logger = get_logger(__name__)
 class TemplateManager:
     """Manages report templates stored as YAML, imported from Excel."""
 
-    def __init__(self, templates_dir: str = "./templates"):
+    def __init__(
+        self, templates_dir: str = "./templates", max_versions: int = DEFAULT_MAX_VERSIONS
+    ):
         self.templates_dir = Path(templates_dir)
         ensure_directory(self.templates_dir)
+        # Dot-prefixed and nested, so the "*.yaml" listing never sees it.
+        self._versions = VersionStore(self.templates_dir / ".history", max_versions)
 
     # ---------- Public API ----------
 
@@ -70,8 +84,63 @@ class TemplateManager:
         path = self._template_path(name)
         if not path.exists():
             raise TemplateNotFoundError(f"Template '{name}' not found at {path}")
+        self._versions.snapshot(path.stem, path.read_bytes(), VersionSource.DELETE)
         path.unlink()
         logger.info(f"Deleted template '{name}'")
+
+    def list_versions(self, name: str) -> List[TemplateVersion]:
+        """Return the saved earlier versions of a template, newest first.
+
+        History outlives the template itself, so a deleted template still has
+        versions to roll back to.
+        """
+        return self._versions.list_versions(self._template_path(name).stem)
+
+    def diff_versions(
+        self, name: str, version_id: str, against: Optional[str] = None
+    ) -> str:
+        """Return a unified diff from ``version_id`` to ``against``.
+
+        ``against`` is another version id, or the current file when omitted.
+        An empty string means the two are identical.
+
+        Raises:
+            TemplateVersionNotFoundError: if a version does not exist.
+            TemplateNotFoundError: if comparing with a current file that is gone.
+        """
+        path = self._template_path(name)
+        old = self._versions.read(path.stem, version_id)
+        if against is None:
+            if not path.exists():
+                raise TemplateNotFoundError(f"Template '{name}' not found at {path}")
+            new, new_label = path.read_bytes(), "current"
+        else:
+            new, new_label = self._versions.read(path.stem, against), against
+        return "".join(
+            difflib.unified_diff(
+                old.decode("utf-8", errors="replace").splitlines(keepends=True),
+                new.decode("utf-8", errors="replace").splitlines(keepends=True),
+                fromfile=version_id,
+                tofile=new_label,
+            )
+        )
+
+    def rollback(self, name: str, version_id: str) -> Path:
+        """Restore a template to an earlier version and return its path.
+
+        The content being replaced is recorded first, so a rollback can itself
+        be rolled back. A deleted template is simply recreated.
+
+        Raises:
+            TemplateVersionNotFoundError: if the version does not exist.
+        """
+        path = self._template_path(name)
+        content = self._versions.read(path.stem, version_id)
+        if path.exists():
+            self._versions.snapshot(path.stem, path.read_bytes(), VersionSource.ROLLBACK)
+        path.write_bytes(content)
+        logger.info(f"Rolled template '{path.stem}' back to version '{version_id}'")
+        return path
 
     def import_from_xlsx(
         self,
@@ -106,7 +175,8 @@ class TemplateManager:
                 ],
             )
 
-        # Save YAML
+        if yaml_path.exists():
+            self._versions.snapshot(safe_name, yaml_path.read_bytes(), VersionSource.IMPORT)
         save_yaml_config(config.model_dump(exclude_none=True), yaml_path)
         logger.info(f"Imported template '{safe_name}' -> {yaml_path}")
 
@@ -153,6 +223,7 @@ class TemplateManager:
                 extras = {
                     k: v for k, v in existing.items() if k not in ReportConfig.model_fields
                 }
+            self._versions.snapshot(stem, path.read_bytes(), VersionSource.SAVE)
 
         save_yaml_config({**config.model_dump(exclude_none=True), **extras}, path)
         logger.info(f"Saved template '{stem}' -> {path}")

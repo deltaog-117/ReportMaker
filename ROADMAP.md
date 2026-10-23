@@ -21,14 +21,7 @@ Items are organized by priority, not by timeline.
 - ✅ Core report generation, config-driven YAML reports with dynamic parameters, PDF export (table + chart), SQLAlchemy data-source abstraction, scheduling engine, HTML and multi-sheet Excel export, template management, and runtime-parameterised reports
 - ✅ HTML email body – `body_format: html` in the email delivery config inlines an HTML report as the message body while still attaching it
 - ✅ Multi-format runs – `output: [pdf, html, excel]` renders one extraction into several files in a single run (a bare `output: pdf` still works). Delivery sends them together: one email with every file attached, or every file copied to the local directory. The GUI editor's output field is now a multi-select and the Excel template's Output Format cell accepts a comma-separated list
-
----
-
-## 🟡 Medium Priority (Important)
-
-These features make the tool more useful and professional.
-
-- **Template Versioning** – Templates are stored and editable already (Excel/YAML, GUI editor); add version history so users can compare and roll back edits.
+- ✅ Template versioning – every overwrite, forced import and delete of a template first saves the old file under `templates/.history/<name>/`; the newest 50 versions are kept. `reportmaker template history|diff|rollback` and a "Version history" action in the GUI's Templates tab list versions, show a diff against the current file, and restore one. A rollback records what it replaced, so it can be undone, and a deleted template can be recreated from its history
 
 ---
 

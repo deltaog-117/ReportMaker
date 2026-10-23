@@ -24,6 +24,7 @@
 | 2026-09-27 | Embedded Scheduler in the GUI | `BackgroundScheduler` Singleton on GUI Lifecycle Hooks | ✅ Confirmed |
 | 2026-10-20 | Visual Template Editor | Form Dialog over a String-Typed Draft Model | ✅ Confirmed |
 | 2026-10-22 | HTML Email Body | Opt-in `body_format` on Email Delivery | ✅ Confirmed |
+| 2026-10-23 | Template Versioning | Snapshot Files in `templates/.history/` | ✅ Confirmed |
 
 ---
 
@@ -1312,6 +1313,30 @@ After the GUI shipped, the only way to define a report was to download the Excel
 **Files:** `report_generation/models.py`, `report_generation/services.py`, `delivery/services.py`, `gui/pages.py`, `gui/models.py`, `gui/services.py`, `template_management/services.py`, `main.py`. **Tests:** `tests/unit/features/report_generation/test_multi_format.py`, `tests/unit/features/delivery/test_multi_file_delivery.py`, plus a round-trip test in the template management tests and updates to the existing delivery, GUI and editor tests for the list contract.
 
 **Deployment note (rollback):** configs that name a single format behave as before. Reverting the change leaves them valid; only configs already using a list would need to go back to a single value.
+
+#### Review / Update Log
+
+| Date | Update | Author |
+|------|--------|--------|
+| 2026-10-23 | Initial decision and implementation | deltaog-117 |
+
+---
+
+### 2026-10-23 — Template Versioning
+
+**Context:** The GUI editor saves templates in place, and forced imports and deletes also replace or remove the YAML with no way back.
+
+**Options considered:** (A) copy the old YAML to `templates/.history/<name>/<timestamp>__<source>.yaml` before each change; (B) a SQLite table of versions; (C) an embedded git repository in `templates/`.
+
+**Decision:** Option A, in a new `VersionStore` used by `TemplateManager`. A snapshot is the file as it was *before* a change, so history never duplicates the current file. Ids are UTC microsecond timestamps plus the cause (`save`, `import`, `delete`, `rollback`), which sorts chronologically and needs no sidecar metadata. The newest 50 per template are kept, and content identical to the newest snapshot is not recorded again.
+
+**Why:** It matches how the project already stores state (flat YAML files, a bounded run-history log), adds no dependency, and stays readable with a text editor. B adds a store to configure and back up, and C needs the git binary at runtime and clashes with a user's own repository.
+
+**Failure behaviour:** A version id is joined onto a path, so it must match the generated pattern exactly; anything else is reported as an unknown version, and dot-only template names are refused, so neither can reach outside the history folder. A rollback snapshots the current file first, so it can be undone. History outlives the template: deleting keeps it, and rolling back recreates the file. If the clock stalls or steps back, a new id is still placed after the newest one.
+
+**Files:** `template_management/versioning.py` (new), `services.py`, `models.py`, `exceptions.py`, `main.py` (`template history|diff|rollback`), `gui/pages.py` (version history dialog). **Tests:** `tests/unit/features/template_management/test_versioning.py` (includes a property test that rolling back to any recorded version restores it byte for byte), and a dialog test in `tests/integration/features/test_gui.py`.
+
+**Deployment note (rollback):** additive. The `.history` folder is ignored by template listing; deleting it only discards history. Consider ignoring `templates/.history/` if the templates folder is committed.
 
 #### Review / Update Log
 

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Template versioning: before a template is overwritten (an editor save, a forced import) or deleted, its previous content is saved as a snapshot under `templates/.history/<name>/`, and the newest 50 per template are kept (`TemplateManager(max_versions=...)`). Unchanged content is not recorded twice. `TemplateManager.list_versions()`, `diff_versions()` and `rollback()` back three new commands, `reportmaker template history|diff|rollback`, and a "Version history" dialog in the GUI's Templates tab to compare a version with the current template and restore it. A rollback snapshots what it replaces, so it can be undone, and rolling back a deleted template recreates it.
 - Multi-format runs: `output` in a report config now accepts a list (`output: [pdf, html, excel]`) as well as a single format. One run extracts and transforms the data once and renders every format from it, writing one file per format with a shared timestamp. Repeated formats are rendered once; an empty list or unknown format is rejected.
 - `ReportResult.output_paths` lists every generated file; `output_path` remains and holds the first one.
 - Delivery handles several files at once: the local channel copies each file, and the email channel sends one message with every file attached. With `body_format: html` the HTML file is used as the body; a run with no HTML file is reported as a failed delivery.
