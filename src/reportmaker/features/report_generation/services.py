@@ -4,7 +4,7 @@ import io
 import time
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -203,10 +203,15 @@ def create_renderer(output_format: OutputFormat) -> Renderer:
 class ReportPipeline:
     """Orchestrates the extraction, transformation, and rendering stages."""
 
-    def __init__(self, extractor: Extractor, transformer: Transformer, renderer: Renderer):
+    def __init__(
+        self,
+        extractor: Extractor,
+        transformer: Transformer,
+        renderers: Dict[OutputFormat, Renderer],
+    ):
         self.extractor = extractor
         self.transformer = transformer
-        self.renderer = renderer
+        self.renderers = renderers
 
     def run(self, request: ReportRequest) -> ReportResult:
         start_time = time.time()
@@ -245,24 +250,27 @@ class ReportPipeline:
 
             safe_name = safe_filename(rendered_name)
             timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{safe_name}_{timestamp}.{config.output.value}"
-            output_path = str(Path(output_dir) / filename)
-
-            self.renderer.render(df, config, output_path)
+            # Render from the one extraction so every format shows identical data.
+            output_paths = []
+            for output_format in config.output:
+                filename = f"{safe_name}_{timestamp}.{output_format.value}"
+                output_path = str(Path(output_dir) / filename)
+                self.renderers[output_format].render(df, config, output_path)
+                output_paths.append(output_path)
 
             duration = time.time() - start_time
             metrics = {
                 "duration_seconds": duration,
                 "extraction_rows": extraction_rows,
                 "transform_rows": transform_rows,
-                "output_format": config.output.value,
+                "output_formats": [f.value for f in config.output],
                 "parameters": processed_params,
             }
             logger.info(f"Report generated successfully in {duration:.2f}s", extra={"metrics": metrics})
 
             return ReportResult(
                 success=True,
-                output_path=output_path,
+                output_paths=output_paths,
                 metrics=metrics,
                 logs=[f"Generated '{rendered_name}' successfully with params: {processed_params}"],
             )
@@ -325,12 +333,14 @@ def load_and_validate_config(config_path: str) -> ReportConfig:
 
 
 # ---------- Convenience Functions ----------
-def create_default_pipeline(output_format: OutputFormat = OutputFormat.PDF) -> ReportPipeline:
-    """Create a pipeline with default implementations for the given format."""
+def create_default_pipeline(
+    output_formats: Sequence[OutputFormat] = (OutputFormat.PDF,),
+) -> ReportPipeline:
+    """Create a pipeline with default implementations for the given formats."""
     return ReportPipeline(
         extractor=SQLAlchemyExtractor(),
         transformer=PandasTransformer(),
-        renderer=create_renderer(output_format),
+        renderers={f: create_renderer(f) for f in output_formats},
     )
 
 

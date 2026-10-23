@@ -20,6 +20,7 @@ Items are organized by priority, not by timeline.
 - ✅ GUI Interface – visual template editor – the Templates tab has a "New template" button and a per-row "Edit" action opening a form dialog for every report setting (name, output format, database URL, SQL, chart, grouping/aggregations/pivot, run-time parameters). A "Test query" button runs the SQL with the parameter defaults and shows the first 20 rows, rolled back so it can never write. Edits save in place and keep sections the form has no field for (e.g. `delivery:`)
 - ✅ Core report generation, config-driven YAML reports with dynamic parameters, PDF export (table + chart), SQLAlchemy data-source abstraction, scheduling engine, HTML and multi-sheet Excel export, template management, and runtime-parameterised reports
 - ✅ HTML email body – `body_format: html` in the email delivery config inlines an HTML report as the message body while still attaching it
+- ✅ Multi-format runs – `output: [pdf, html, excel]` renders one extraction into several files in a single run (a bare `output: pdf` still works). Delivery sends them together: one email with every file attached, or every file copied to the local directory. The GUI editor's output field is now a multi-select and the Excel template's Output Format cell accepts a comma-separated list
 
 ---
 
@@ -28,7 +29,6 @@ Items are organized by priority, not by timeline.
 These features make the tool more useful and professional.
 
 - **Template Versioning** – Templates are stored and editable already (Excel/YAML, GUI editor); add version history so users can compare and roll back edits.
-- **Multi-format runs** – Let one report produce several formats (`output: [pdf, html, excel]`) in a single run and deliver them together.
 
 ---
 

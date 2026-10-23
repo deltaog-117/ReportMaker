@@ -75,9 +75,24 @@ class ReportConfig(BaseModel):
     parameters: Optional[List[ParameterSchema]] = Field(None, description="Dynamic parameters definition")
     data_source: DataSourceConfig
     transform: Optional[TransformConfig] = None
-    output: OutputFormat = OutputFormat.PDF
+    output: List[OutputFormat] = Field(
+        default_factory=lambda: [OutputFormat.PDF],
+        description="One format or a list of formats; each is rendered from the same data in a single run",
+    )
     chart: Optional[ChartConfig] = None
     schedule: Optional[str] = Field(None, description="Cron expression (not used in core generation)")
+
+    @field_validator("output", mode="before")
+    def normalize_output(cls, v):
+        """Accept ``output: pdf`` as shorthand for ``output: [pdf]``."""
+        return [v] if isinstance(v, (str, OutputFormat)) else v
+
+    @field_validator("output")
+    def validate_output(cls, v):
+        if not v:
+            raise ValueError("output must list at least one format")
+        # dict.fromkeys drops repeats but keeps order, so "pdf, pdf" renders once.
+        return list(dict.fromkeys(v))
 
     @model_validator(mode="after")
     def validate_parameter_defaults(self):
@@ -118,8 +133,18 @@ class ReportRequest(BaseModel):
 class ReportResult(BaseModel):
     """Result of a report generation run."""
     success: bool
-    output_path: Optional[str] = None
+    output_path: Optional[str] = Field(None, description="First generated file (kept for single-file callers)")
+    output_paths: List[str] = Field(default_factory=list, description="Every generated file, one per format")
     error: Optional[str] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
     logs: List[str] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @model_validator(mode="after")
+    def sync_output_paths(self):
+        """Keep ``output_path`` and ``output_paths`` consistent whichever one was set."""
+        if self.output_path and not self.output_paths:
+            self.output_paths = [self.output_path]
+        elif self.output_paths and not self.output_path:
+            self.output_path = self.output_paths[0]
+        return self

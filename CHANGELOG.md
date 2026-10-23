@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Multi-format runs: `output` in a report config now accepts a list (`output: [pdf, html, excel]`) as well as a single format. One run extracts and transforms the data once and renders every format from it, writing one file per format with a shared timestamp. Repeated formats are rendered once; an empty list or unknown format is rejected.
+- `ReportResult.output_paths` lists every generated file; `output_path` remains and holds the first one.
+- Delivery handles several files at once: the local channel copies each file, and the email channel sends one message with every file attached. With `body_format: html` the HTML file is used as the body; a run with no HTML file is reported as a failed delivery.
+- The GUI template editor's output field is a multi-select, the run result lists a Download (and Preview) button per file, and the Excel template's "Output Format" cell accepts a comma-separated list (e.g. `pdf, html`).
 - Email delivery option `body_format: html`: inlines an HTML report as the message body (with a plain-text fallback), while still attaching the file. The default stays `text`; a non-HTML report with `body_format: html` is reported as a failed delivery.
 - Visual template editor in the GUI's Templates tab: "New template" and a per-row "Edit" action open a dialog covering every report setting (name, description, output format, database URL, SQL, chart, group-by, aggregations, pivot, and run-time parameters), with every problem reported at once on save. A "Test query" button runs the SQL with the parameters' default values and shows the first 20 rows; the connection is never committed, so a mistyped `UPDATE`/`DELETE` is rolled back.
 - `TemplateManager.save_config()`: stores a validated `ReportConfig` as a YAML template, refusing to overwrite unless forced and carrying over top-level sections the model does not know (such as `delivery:`) from the file it replaces.
@@ -23,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Semantic configuration validation beyond Pydantic's structural checks: database URL, Jinja2 syntax, cron expression, and chart column validity, wired into `run` and `schedule add` so invalid configs fail fast with actionable messages.
 - `delivery` feature: reports can be delivered via a `delivery:` section in the report YAML — copied to a local directory (`channel: local`) or sent as an SMTP email attachment (`channel: email`) — triggered automatically after `run` and after each successful scheduled run.
 - `.gitignore` for the Python project (was previously missing, resulting in `__pycache__` and compiled `.pyc` files being tracked).
+
+### Changed
+- `ReportConfig.output` is now a list of `OutputFormat`; single-value YAML keeps working because a lone value is wrapped into a list. Code reading `config.output.value` must read the list instead.
+- `ReportPipeline` takes `renderers` (a mapping of format to renderer) instead of a single `renderer`; `create_default_pipeline()` takes a sequence of formats. `DeliveryHandler.deliver()` takes a list of paths; `deliver_report()` and `deliver_if_configured()` accept a single path or a list.
+- The scheduler's run history still records one path per run (the first file).
 
 ### Fixed
 - Four pre-existing, unrelated test failures blocking the new `scripts/check` (`test_pandas_transformer_invalid_aggregation`, `test_sqlalchemy_extractor_success`, `test_process_parameters_defaults`, `test_process_parameters_override`): two asserted outcomes that contradicted their own sibling tests or the implementation's contract, and two referenced a `get_engine` name `report_generation/services.py` never had and an outdated `.extract()` call signature. No production code changed.

@@ -322,27 +322,25 @@ class _Dashboard:
             f"{metrics.get('transform_rows', '?')} rows, "
             f"created in {metrics.get('duration_seconds', 0):.1f}s"
         ).classes("text-grey")
-        if result.output_path:
-            path = Path(result.output_path)
-            output = next(
-                (
-                    f
-                    for f in list_output_files(self._settings.output_dir)
-                    if f.name == path.name
-                ),
-                None,
-            )
-            with ui.row():
+        files = list_output_files(self._settings.output_dir)
+        for output_path in result.output_paths:
+            path = Path(output_path)
+            output = next((f for f in files if f.name == path.name), None)
+            with ui.row().classes("items-center"):
+                if len(result.output_paths) > 1:
+                    ui.label(path.name).classes("text-grey")
+                # Default args pin this iteration's path; a bare closure would
+                # see the last one for every button.
                 ui.button(
                     "Download",
                     icon="download",
-                    on_click=lambda: self._download_file(path),
+                    on_click=lambda p=path: self._download_file(p),
                 )
                 if output is not None and output.is_previewable:
                     ui.button(
                         "Preview",
                         icon="visibility",
-                        on_click=lambda: self._preview(output),
+                        on_click=lambda o=output: self._preview(o),
                     ).props("outline")
         delivery = outcome.delivery
         if delivery is not None and delivery.channel != DeliveryChannel.NONE:
@@ -789,9 +787,11 @@ class _Dashboard:
             ui.input("Description (optional)").bind_value(draft, "description").classes(
                 "w-full"
             )
-            ui.select(_OUTPUT_CHOICES, label="Output format").bind_value(
-                draft, "output"
-            ).classes("w-full")
+            ui.select(
+                _OUTPUT_CHOICES, label="Output formats", multiple=True
+            ).bind_value(draft, "output").classes("w-full").props("use-chips").mark(
+                "editor-output"
+            )
 
         with ui.expansion("2. Where the data comes from", value=True).classes("w-full"):
             ui.input(

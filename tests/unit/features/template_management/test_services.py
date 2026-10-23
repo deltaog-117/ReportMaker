@@ -48,3 +48,25 @@ class TestSaveConfig:
     def test_rejects_names_with_no_usable_characters(self, tmp_path, name):
         with pytest.raises(TemplateValidationError):
             TemplateManager(str(tmp_path)).save_config(self._config("x"), name=name)
+
+
+class TestMultiFormatTemplates:
+    """The Excel template's Output Format cell accepts several formats."""
+
+    @staticmethod
+    def _config(output) -> ReportConfig:
+        return ReportConfig(
+            name="Multi",
+            data_source={"url": "sqlite:///demo.db", "query": "SELECT 1"},
+            output=output,
+        )
+
+    def test_export_then_import_keeps_every_format(self, tmp_path):
+        manager = TemplateManager(str(tmp_path / "templates"))
+        manager.save_config(self._config(["pdf", "excel"]))
+        xlsx = tmp_path / "multi.xlsx"
+        manager.export_to_xlsx("multi", str(xlsx))
+
+        other = TemplateManager(str(tmp_path / "other"))
+        assert other.import_from_xlsx(str(xlsx)).success
+        assert [f.value for f in other.validate_template("multi").output] == ["pdf", "excel"]

@@ -144,7 +144,7 @@ class TemplateDraft(BaseModel):
 
     name: str = ""
     description: str = ""
-    output: str = "pdf"
+    output: List[str] = Field(default_factory=lambda: ["pdf"])
     database_url: str = ""
     query: str = ""
     chart_kind: str = ""

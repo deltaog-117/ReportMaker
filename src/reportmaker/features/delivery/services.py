@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from email.message import EmailMessage
 from pathlib import Path
 from smtplib import SMTP
-from typing import Optional, Tuple
+from typing import List, Optional, Sequence, Tuple, Union
 
 from pydantic import ValidationError
 
@@ -28,21 +28,22 @@ class DeliveryHandler(ABC):
     """Deliver a generated report file to its destination."""
 
     @abstractmethod
-    def deliver(self, report_path: str, config: DeliveryConfig) -> DeliveryResult:
-        """Send or copy the report and return the outcome."""
+    def deliver(self, report_paths: List[str], config: DeliveryConfig) -> DeliveryResult:
+        """Send or copy the report files and return the outcome."""
         pass
 
 
 class LocalDeliveryHandler(DeliveryHandler):
     """Copy the report into a target local directory."""
 
-    def deliver(self, report_path: str, config: DeliveryConfig) -> DeliveryResult:
+    def deliver(self, report_paths: List[str], config: DeliveryConfig) -> DeliveryResult:
         try:
             dest_dir = ensure_directory(config.local_dir)
-            dest_path = dest_dir / Path(report_path).name
-            shutil.copy2(report_path, dest_path)
-            logger.info(f"Delivered report to local path {dest_path}")
-            return DeliveryResult(success=True, channel=DeliveryChannel.LOCAL, destination=str(dest_path))
+            for report_path in report_paths:
+                dest_path = dest_dir / Path(report_path).name
+                shutil.copy2(report_path, dest_path)
+                logger.info(f"Delivered report to local path {dest_path}")
+            return DeliveryResult(success=True, channel=DeliveryChannel.LOCAL, destination=str(dest_dir))
         except OSError as e:
             return DeliveryResult(success=False, channel=DeliveryChannel.LOCAL, error=str(e))
 
@@ -50,9 +51,9 @@ class LocalDeliveryHandler(DeliveryHandler):
 class EmailDeliveryHandler(DeliveryHandler):
     """Send the report as an email attachment via SMTP."""
 
-    def deliver(self, report_path: str, config: DeliveryConfig) -> DeliveryResult:
+    def deliver(self, report_paths: List[str], config: DeliveryConfig) -> DeliveryResult:
         try:
-            message = self._build_message(report_path, config.email)
+            message = self._build_message(report_paths, config.email)
             self._send(message)
             logger.info(f"Delivered report by email to {config.email.to}")
             return DeliveryResult(
@@ -63,24 +64,29 @@ class EmailDeliveryHandler(DeliveryHandler):
         except (OSError, EmailDeliveryError) as e:
             return DeliveryResult(success=False, channel=DeliveryChannel.EMAIL, error=str(e))
 
-    def _build_message(self, report_path: str, email_cfg: EmailDeliveryConfig) -> EmailMessage:
-        path = Path(report_path)
+    def _build_message(
+        self, report_paths: List[str], email_cfg: EmailDeliveryConfig
+    ) -> EmailMessage:
+        paths = [Path(p) for p in report_paths]
         message = EmailMessage()
         message["From"] = get_env("SMTP_FROM") or get_env("SMTP_USER", "reportmaker@localhost")
         message["To"] = ", ".join(email_cfg.to)
         if email_cfg.cc:
             message["Cc"] = ", ".join(email_cfg.cc)
-        message["Subject"] = email_cfg.subject or f"Report: {path.stem}"
+        message["Subject"] = email_cfg.subject or f"Report: {paths[0].stem}"
         message.set_content(email_cfg.body or "Your report is attached.")
         if email_cfg.body_format == EmailBodyFormat.HTML:
-            if path.suffix.lower() != ".html":
+            html_path = next((p for p in paths if p.suffix.lower() == ".html"), None)
+            if html_path is None:
                 raise EmailDeliveryError(
-                    f"body_format 'html' needs an HTML report, but the report is {path.name}"
+                    "body_format 'html' needs an HTML report, but the reports are "
+                    + ", ".join(p.name for p in paths)
                 )
-            message.add_alternative(path.read_text(encoding="utf-8"), subtype="html")
+            message.add_alternative(html_path.read_text(encoding="utf-8"), subtype="html")
 
-        maintype, subtype = self._guess_content_type(path)
-        message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
+        for path in paths:
+            maintype, subtype = self._guess_content_type(path)
+            message.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
         return message
 
     @staticmethod
@@ -122,15 +128,24 @@ def create_delivery_handler(channel: DeliveryChannel) -> Optional[DeliveryHandle
     raise DeliveryError(f"Unsupported delivery channel: {channel}")
 
 
-def deliver_report(report_path: str, config: DeliveryConfig) -> DeliveryResult:
-    """Deliver a generated report according to its delivery configuration."""
+def _as_paths(report_paths: Union[str, Sequence[str]]) -> List[str]:
+    """Let callers pass one path or several; a bare str must not be iterated per character."""
+    return [report_paths] if isinstance(report_paths, str) else list(report_paths)
+
+
+def deliver_report(
+    report_paths: Union[str, Sequence[str]], config: DeliveryConfig
+) -> DeliveryResult:
+    """Deliver the generated report file(s) according to the delivery configuration."""
     handler = create_delivery_handler(config.channel)
     if handler is None:
         return DeliveryResult(success=True, channel=DeliveryChannel.NONE, destination=None)
-    return handler.deliver(report_path, config)
+    return handler.deliver(_as_paths(report_paths), config)
 
 
-def deliver_if_configured(config_path: str, report_path: str) -> Optional[DeliveryResult]:
+def deliver_if_configured(
+    config_path: str, report_paths: Union[str, Sequence[str]]
+) -> Optional[DeliveryResult]:
     """Deliver a report if its YAML config has a ``delivery`` section.
 
     Returns None when the config declares no delivery, so callers can tell
@@ -155,4 +170,4 @@ def deliver_if_configured(config_path: str, report_path: str) -> Optional[Delive
             channel=DeliveryChannel.NONE,
             error=f"Invalid delivery configuration: {e}",
         )
-    return deliver_report(report_path, delivery_config)
+    return deliver_report(report_paths, delivery_config)

@@ -3,6 +3,7 @@
 import sys
 import json
 from pathlib import Path
+from typing import List
 
 import click
 from pydantic import ValidationError
@@ -53,9 +54,9 @@ def run(config: str, output_dir: str, verbose: bool, param: tuple, params_file: 
         click.echo(f"❌ {e}", err=True)
         sys.exit(1)
     if result.success:
-        click.echo(f"✅ Report generated successfully: {result.output_path}")
+        click.echo(f"✅ Report generated successfully: {', '.join(result.output_paths)}")
         click.echo(f"📊 Metrics: {result.metrics}")
-        _maybe_deliver(config, result.output_path)
+        _maybe_deliver(config, result.output_paths)
         sys.exit(0)
     else:
         click.echo(f"❌ Report generation failed: {result.error}", err=True)
@@ -75,7 +76,7 @@ def validate_cmd(config: str):
         sys.exit(1)
     click.echo(f"✅ '{config}' is valid.")
     click.echo(f"   Report name: {cfg.name}")
-    click.echo(f"   Output format: {cfg.output.value}")
+    click.echo(f"   Output format: {_format_names(cfg.output)}")
     click.echo(f"   Parameters: {len(cfg.parameters) if cfg.parameters else 0}")
     click.echo(f"   Has chart: {'yes' if cfg.chart else 'no'}")
 
@@ -255,7 +256,7 @@ def template_validate(name, templates_dir):
         config = manager.validate_template(name)
         click.echo(f"✅ Template '{name}' is valid.")
         click.echo(f"   Report name: {config.name}")
-        click.echo(f"   Output format: {config.output.value}")
+        click.echo(f"   Output format: {_format_names(config.output)}")
         click.echo(f"   Parameters: {len(config.parameters) if config.parameters else 0}")
         click.echo(f"   Has chart: {'yes' if config.chart else 'no'}")
     except TemplateNotFoundError as e:
@@ -313,7 +314,11 @@ def gui_cmd(host, port, templates_dir, output_dir, schedules_file, no_browser):
 
 
 # ---------- Helpers ----------
-def _maybe_deliver(config_path: str, output_path: str) -> None:
+def _format_names(formats) -> str:
+    return ", ".join(f.value for f in formats)
+
+
+def _maybe_deliver(config_path: str, output_paths: List[str]) -> None:
     """Deliver the generated report if its YAML config has a 'delivery' section."""
     raw_config = load_yaml_config(config_path)
     raw_delivery = raw_config.get("delivery")
@@ -324,7 +329,7 @@ def _maybe_deliver(config_path: str, output_path: str) -> None:
     except ValidationError as e:
         click.echo(f"⚠️  Invalid delivery configuration, skipping delivery: {e}", err=True)
         return
-    result = deliver_report(output_path, delivery_config)
+    result = deliver_report(output_paths, delivery_config)
     if result.success:
         click.echo(f"📬 Delivered via {result.channel.value}: {result.destination}")
     else:
@@ -333,8 +338,8 @@ def _maybe_deliver(config_path: str, output_path: str) -> None:
 
 def _deliver_from_schedule(cfg: ScheduleConfig, result: ReportResult) -> None:
     """Deliver a scheduled report if its config declares a delivery section."""
-    if result.output_path:
-        _maybe_deliver(cfg.report_config, result.output_path)
+    if result.output_paths:
+        _maybe_deliver(cfg.report_config, result.output_paths)
 
 
 def _parse_parameters(param: tuple, params_file: str) -> dict:

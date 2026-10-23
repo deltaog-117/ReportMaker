@@ -35,7 +35,7 @@ def test_local_delivery_handler_copies_file(tmp_path):
     dest_dir = tmp_path / "archive"
 
     config = DeliveryConfig(channel=DeliveryChannel.LOCAL, local_dir=str(dest_dir))
-    result = LocalDeliveryHandler().deliver(str(report_path), config)
+    result = LocalDeliveryHandler().deliver([str(report_path)], config)
 
     assert result.success is True
     assert (dest_dir / "report.pdf").read_bytes() == b"%PDF-1.4 fake report"
@@ -58,7 +58,7 @@ def test_email_delivery_handler_sends_via_smtp(tmp_path, monkeypatch):
         mock_smtp = MagicMock()
         mock_smtp_cls.return_value.__enter__.return_value = mock_smtp
 
-        result = EmailDeliveryHandler().deliver(str(report_path), config)
+        result = EmailDeliveryHandler().deliver([str(report_path)], config)
 
     assert result.success is True
     assert result.destination == "recipient@example.com"
@@ -72,7 +72,7 @@ def test_email_delivery_handler_fails_without_smtp_host(tmp_path, monkeypatch):
     monkeypatch.delenv("SMTP_HOST", raising=False)
 
     config = DeliveryConfig(channel=DeliveryChannel.EMAIL, email=EmailDeliveryConfig(to=["recipient@example.com"]))
-    result = EmailDeliveryHandler().deliver(str(report_path), config)
+    result = EmailDeliveryHandler().deliver([str(report_path)], config)
 
     assert result.success is False
     assert "SMTP_HOST" in result.error

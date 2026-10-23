@@ -1296,3 +1296,27 @@ After the GUI shipped, the only way to define a report was to download the Excel
 | 2026-10-22 | Initial decision and implementation | deltaog-117 |
 
 ---
+
+### 2026-10-23 — Multi-format Runs
+
+**Context:** One report could only produce one format per run, so getting a PDF and an Excel copy meant two configs or two runs. The previous cycle deferred this on purpose because it touches the YAML schema, pipeline, GUI form and delivery.
+
+**Options considered:** (A) make `output` accept a single format or a list, and add `output_paths` to the result while keeping `output_path` as the first file; (B) replace both fields with list-only versions and migrate every consumer; (C) keep `output` and add a separate `extra_outputs` field.
+
+**Decision:** Option A, with a multi-select in the GUI editor and one email carrying every file. A validator wraps a lone value into a list, so existing YAML, stored templates and the scheduler keep working unchanged. `ReportResult` keeps its two path fields in sync, so single-path callers (run history, older tests) need no change.
+
+**Why:** It is the only option that matches the roadmap syntax without breaking existing configs. B breaks every stored template for no gain over a shim, and C leaves two places to name a format. Rendering from one extraction guarantees all files show identical data and avoids querying the database once per format.
+
+**Failure behaviour:** If any renderer fails the whole run fails; no partial success is reported. `body_format: html` with no HTML file among the outputs is a failed delivery.
+
+**Files:** `report_generation/models.py`, `report_generation/services.py`, `delivery/services.py`, `gui/pages.py`, `gui/models.py`, `gui/services.py`, `template_management/services.py`, `main.py`. **Tests:** `tests/unit/features/report_generation/test_multi_format.py`, `tests/unit/features/delivery/test_multi_file_delivery.py`, plus a round-trip test in the template management tests and updates to the existing delivery, GUI and editor tests for the list contract.
+
+**Deployment note (rollback):** configs that name a single format behave as before. Reverting the change leaves them valid; only configs already using a list would need to go back to a single value.
+
+#### Review / Update Log
+
+| Date | Update | Author |
+|------|--------|--------|
+| 2026-10-23 | Initial decision and implementation | deltaog-117 |
+
+---

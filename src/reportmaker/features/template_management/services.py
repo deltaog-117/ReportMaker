@@ -265,14 +265,17 @@ class TemplateManager:
         if not query:
             raise TemplateImportError(f"'{L.FIELD_SQL_QUERY}' is required")
 
-        output_format_str = self._get(report_kv, L.FIELD_OUTPUT_FORMAT, default="pdf").lower()
-        try:
-            output_format = OutputFormat(output_format_str)
-        except ValueError:
-            raise TemplateImportError(
-                f"Invalid Output Format '{output_format_str}'. "
-                f"Choose from: {', '.join(f.value for f in OutputFormat)}"
-            )
+        output_formats_str = self._get(report_kv, L.FIELD_OUTPUT_FORMAT, default="pdf").lower()
+        output_format: List[OutputFormat] = []
+        for token in (t.strip() for t in output_formats_str.split(",")):
+            try:
+                output_format.append(OutputFormat(token))
+            except ValueError:
+                raise TemplateImportError(
+                    f"Invalid Output Format '{token}'. "
+                    f"Choose from: {', '.join(f.value for f in OutputFormat)} "
+                    "(separate several with commas)"
+                )
 
         data_source = DataSourceConfig(url=db_url, query=query)
 
@@ -355,7 +358,7 @@ class TemplateManager:
         ws_report.append([L.FIELD_DESCRIPTION, config.description or ""])
         ws_report.append([L.FIELD_DATABASE_URL, config.data_source.url])
         ws_report.append([L.FIELD_SQL_QUERY, config.data_source.query])
-        ws_report.append([L.FIELD_OUTPUT_FORMAT, config.output.value])
+        ws_report.append([L.FIELD_OUTPUT_FORMAT, ", ".join(f.value for f in config.output)])
         ws_report.append([L.FIELD_SCHEDULE, config.schedule or ""])
         ws_report.column_dimensions["A"].width = 25
         ws_report.column_dimensions["B"].width = 80

@@ -29,7 +29,7 @@ def make_draft(db_url: str = "sqlite:///demo.db", **overrides) -> TemplateDraft:
         "name": "Demo",
         "database_url": db_url,
         "query": "SELECT 1 AS n",
-        "output": "html",
+        "output": ["html"],
     }
     fields.update(overrides)
     return TemplateDraft(**fields)
@@ -51,7 +51,7 @@ def sales_db(tmp_path: Path) -> str:
 def test_minimal_draft_builds_a_config():
     config = build_report_config(make_draft())
     assert config.name == "Demo"
-    assert config.output.value == "html"
+    assert [f.value for f in config.output] == ["html"]
     assert config.chart is None and config.transform is None
     assert config.parameters is None
 
@@ -109,7 +109,7 @@ def test_every_problem_is_reported_at_once():
         ({"parameters": [ParameterRow(name="", default="x")]}, "no name"),
         ({"query": "SELECT {{ broken"}, "Jinja2"),
         ({"database_url": "not a url"}, "database URL"),
-        ({"output": "docx"}, "output"),
+        ({"output": ["docx"]}, "output"),
     ],
 )
 def test_invalid_drafts_are_rejected_with_a_clear_message(overrides, fragment):
@@ -154,7 +154,7 @@ def drafts(draw) -> TemplateDraft:
     return make_draft(
         name=draw(words),
         description=draw(st.one_of(st.just(""), words)),
-        output=draw(st.sampled_from(["pdf", "html", "excel"])),
+        output=draw(st.lists(st.sampled_from(["pdf", "html", "excel"]), min_size=1, unique=True)),
         chart_kind=draw(st.sampled_from(["bar", "line"])) if with_chart else "",
         chart_x=draw(words) if with_chart else "",
         chart_y=draw(words) if with_chart else "",

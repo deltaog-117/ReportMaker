@@ -108,8 +108,8 @@ def run_report_with_delivery(
         )
 
     delivery = None
-    if result.success and result.output_path:
-        delivery = deliver_if_configured(config_path, result.output_path)
+    if result.success and result.output_paths:
+        delivery = deliver_if_configured(config_path, result.output_paths)
     logger.info(
         f"GUI run finished: success={result.success} "
         f"duration={time.perf_counter() - started:.2f}s"
@@ -234,8 +234,8 @@ def deliver_after_schedule_run(cfg: ScheduleConfig, result: ReportResult) -> Non
     report scheduled from the GUI honours its config's ``delivery:`` section
     just like the CLI's ``schedule start`` daemon does.
     """
-    if result.output_path:
-        deliver_if_configured(cfg.report_config, result.output_path)
+    if result.output_paths:
+        deliver_if_configured(cfg.report_config, result.output_paths)
 
 
 # ---------- Templates ----------
@@ -426,7 +426,7 @@ def draft_from_config(config: ReportConfig) -> TemplateDraft:
     return TemplateDraft(
         name=config.name,
         description=config.description or "",
-        output=config.output.value,
+        output=[f.value for f in config.output],
         database_url=config.data_source.url,
         query=config.data_source.query,
         chart_kind=chart.kind.value if chart else "",

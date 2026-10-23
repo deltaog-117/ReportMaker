@@ -210,7 +210,7 @@ def test_deliver_after_schedule_run_delivers_when_output_exists(tmp_path):
         "reportmaker.features.gui.services.deliver_if_configured"
     ) as deliver:
         deliver_after_schedule_run(cfg, result)
-    deliver.assert_called_once_with("cfg.yaml", str(tmp_path / "r.pdf"))
+    deliver.assert_called_once_with("cfg.yaml", [str(tmp_path / "r.pdf")])
 
 
 def test_deliver_after_schedule_run_skips_when_no_output():
@@ -285,7 +285,7 @@ def test_run_delivers_after_a_successful_report(tmp_path):
         outcome = run_report_with_delivery("cfg.yaml", tmp_path, {"a": 1})
 
     assert outcome.succeeded and outcome.delivery == delivered
-    deliver.assert_called_once_with("cfg.yaml", str(tmp_path / "r.pdf"))
+    deliver.assert_called_once_with("cfg.yaml", [str(tmp_path / "r.pdf")])
 
 
 def test_run_does_not_deliver_a_failed_report(tmp_path):
